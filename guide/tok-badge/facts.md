@@ -47,6 +47,7 @@ grep -Fc -- '--color-foreground-subtlest' unpack/app_extract/out/renderer/assets
 | styles-*.js | `cachedInputTokens` | rounds usage 缓存字段 |
 | styles-*.js | `generationDurationMs` | rounds 生成段字段(渲染侧字面量可能退出,见 method.md 特例) |
 | styles-*.js | `tokensPerSecond` | rounds 速度字段 |
+| styles-*.js | `background_task` | readSession user 行 `info.source` 枚举（后台通知合成行；tok-badge 段切判据） |
 | styles-*.css | `--color-foreground-subtlest` | 主题颜色变量 |
 | styles-*.css | `--color-foreground-subtle` | 主题颜色变量 |
 
@@ -64,6 +65,7 @@ grep -Fc -- '--color-foreground-subtlest' unpack/app_extract/out/renderer/assets
 6. **token 口径**:`total = input + output` 恒成立;`cacheRead/cacheWrite ⊆ input`;三桶=缓存读/非缓存/输出
 7. **部分视图防线**:快照落在 turn 中途或仍在流式时整组不写不锁 `authoritative`(否则中途值冻成终值);`authoritative` 置位后迟到/重放的 usage.delta 一律丢弃防重复计
 8. **速度增量两路**:遥测 `stream.chunk`(channel 只有 thought/text)+ conversation `row.delta`(path=`inputText`,工具输入 JSON 流);`path=text` 与遥测重复不计,`output.text` 是工具执行结果不计
+9. **段切(steer 段粒度)**:turn 中途收到后台任务通知时,渲染侧在通知行处切新可视卡(section id=通知行 msg id),官方卡头「已工作 X」显示的是**各卡段墙钟**而非整 turn 墙钟——tok-badge 500ms 扫 DOM 新增卡切段(detectSegSplit→steerSplit),旧 turn 后续帧经重定向落新卡;权威校正组键=段边界行 msg id(`info.source==='background_task'` 判通知合成行,锚点卡 background_task 条即此依赖)
 
 ## 验证清单(换装重启后)
 

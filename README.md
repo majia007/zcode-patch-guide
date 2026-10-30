@@ -52,7 +52,7 @@ node inject/pack.mjs --deploy
 │   │   ├── environment.md  # 环境探测:找安装目录、asar+unpacked 成对、版本核对、mac 注意
 │   │   ├── pipeline.md     # 部署流水线:解包→抽查→打包→换装→验证→回滚(命令级)
 │   │   └── method.md       # 渔:minified 阅读法、锚点规范与稳定性判据、MISS 甄别、漂移重定位
-│   ├── tok-badge/facts.md  # token 统计:锚点卡 23 条 + 机制最小结论 + 验证清单
+│   ├── tok-badge/facts.md  # token 统计:锚点卡 24 条 + 机制最小结论 + 验证清单
 │   └── block-esc/facts.md  # ESC 拦截:锚点卡 + 机制 + 验证清单
 └── inject/
     ├── tok-badge.js        # 徽标脚本(手工维护物;头注释=全量设计文档)
