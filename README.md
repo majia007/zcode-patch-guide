@@ -1,6 +1,39 @@
 # zcode-patch-guide
 
-给 ZCode 桌面客户端打本地补丁的**注入工具链 + 操作手册**:目前提供两个功能——**tok-badge**(对话气泡旁的 token 用量/耗时统计)与 **block-esc**(防误触的 ESC 条件拦截)。全部修改经解包→注入→打包→换装落地,自动保留回滚包。
+## 使用说明
+
+不需要自己动手解包打补丁——把仓库地址丢给 agent,让它照本仓库的说明操作即可。典型指令(可直接复制):
+
+> 按 https://github.com/majia007/zcode-patch-guide 的说明,为 ZCode 加入 token 统计条(tok-badge)的功能
+
+- 想要别的功能,把功能名换掉即可:`ESC 拦截(block-esc)`,也可以两个都要
+- 前提:agent 需要在装了 ZCode 的这台机器上运行,能执行命令、读写文件
+
+不想经 agent 也可以手动执行,见[快速开始](#快速开始手动)。
+
+## 快速开始(手动)
+
+```bash
+git clone https://github.com/majia007/zcode-patch-guide && cd zcode-patch-guide
+# 1. 解包(<resources> 换成你的 ZCode 安装目录下的 resources,定位见 guide/common/environment.md)
+npx --yes @electron/asar extract "<resources>/app.asar" unpack/app_extract
+# 2. 打包并挂换装监视器(安装目录不在常见路径时,前置 ZCODE_RES=<resources> 环境变量)
+node inject/pack.mjs --deploy
+# 3. 完全退出 ZCode(右键托盘图标退出;点窗口 × 只是隐藏)→ 自动换装并自动重启
+```
+
+回滚:把 `<resources>/app.asar.old` 改名回 `app.asar` 重启即可(详见 `guide/common/pipeline.md`)。
+
+功能开关(DevTools 控制台,改后刷新):`localStorage.setItem('zcode:tok-badge:enabled','0')` / `localStorage.setItem('zcode:block-esc:enabled','0')`。
+
+## 功能
+
+给 ZCode 桌面客户端打本地补丁的**注入工具链 + 操作手册**,目前提供两个功能:
+
+- **tok-badge** — 对话气泡旁的 token 用量/耗时统计
+- **block-esc** — 防误触的 ESC 条件拦截
+
+全部修改经解包→注入→打包→换装落地,自动保留回滚包。
 
 ![tok-badge 实机效果:回复下方的 token 统计行与生成中的实时速度位](docs/tok-badge-screenshot.png)
 
@@ -15,24 +48,9 @@
 | Windows | ✅ 实测(3.14.1 ~ 3.17.1 系列多版本) |
 | macOS | ⚠️ experimental,**未实测**——安装路径/进程探测分支已写,但改已签名 app 的 asar 需 ad-hoc 重签,见 `guide/common/environment.md` |
 
-## 快速开始(给人)
-
-```bash
-git clone <本仓库> && cd zcode-patch-guide
-# 1. 解包(<resources> 换成你的 ZCode 安装目录下的 resources,定位见 guide/common/environment.md)
-npx --yes @electron/asar extract "<resources>/app.asar" unpack/app_extract
-# 2. 打包并挂换装监视器(安装目录不在常见路径时,前置 ZCODE_RES=<resources> 环境变量)
-node inject/pack.mjs --deploy
-# 3. 完全退出 ZCode(右键托盘图标退出;点窗口 × 只是隐藏)→ 自动换装并自动重启
-```
-
-回滚:把 `<resources>/app.asar.old` 改名回 `app.asar` 重启即可(详见 `guide/common/pipeline.md`)。
-
-功能开关(DevTools 控制台,改后刷新):`localStorage.setItem('zcode:tok-badge:enabled','0')` / `localStorage.setItem('zcode:block-esc:enabled','0')`。
-
 ## 给 agent:从这里开始
 
-典型指令长这样:**「按照 <本仓库地址> 的说明,加一下 token 统计功能」**。你的任务是把它变成一次完整部署:探测 → 解包 → 锚点抽查 → 注入打包 → 换装 → 验证。按下表路由读文件,然后照 `guide/common/pipeline.md` 执行:
+典型指令长这样:**「按照 https://github.com/majia007/zcode-patch-guide 的说明,加一下 token 统计功能」**(即开头「使用说明」里的模板)。你的任务是把它变成一次完整部署:探测 → 解包 → 锚点抽查 → 注入打包 → 换装 → 验证。按下表路由读文件,然后照 `guide/common/pipeline.md` 执行:
 
 | 场景 | 要读 |
 |------|------|
