@@ -710,11 +710,18 @@
       }
       var gapDb = wall ? Math.max(0, wall - dur) : 0;
       if (t) { // 实时 T 接管：清掉壳帧时先建的恢复 T 及其挂载，防同 section 双 badge
-        var els = document.querySelectorAll('[data-zcode-tok-badge="' + uid + '"]');
-        for (var q = 0; q < els.length; q++) els[q].remove();
-        // 只删 uid 键的恢复 T；steer 段 T 自身键=uid（帧计与权威共用同一记录）不可删——
-        // 删了权威值写进已出表的游离对象，UI 永远 miss
-        if (turns.get(uid) !== t) dropTurn(uid);
+        // 清理与 dropTurn 必须同守卫（turns.get(uid) !== t）：活 T 自身键=uid 时（恢复接管后
+        // 帧经 lastTidBySid/segRedirect 持续路由进来；steer 段 T 键=卡 id 同形），uid 键徽标
+        // 就是活徽标——无守卫删除会在每个校正周期删一次、下轮 schedulePaint 重贴 = 统计条
+        // 以 finalize 节奏（流式会话壳帧 ~2.3s 一轮）周期闪烁（2026-10-30 主世界 remove 栈
+        // 陷阱实证：Element.remove ← applySessionData ← onFrame；del/add 对间距 121-162ms）
+        if (turns.get(uid) !== t) {
+          var els = document.querySelectorAll('[data-zcode-tok-badge="' + uid + '"]');
+          for (var q = 0; q < els.length; q++) els[q].remove();
+          // 只删 uid 键的恢复 T；steer 段 T 自身键=uid（帧计与权威共用同一记录）不可删——
+          // 删了权威值写进已出表的游离对象，UI 永远 miss
+          dropTurn(uid);
+        }
       } else {
         t = T(uid, sid);
       }
