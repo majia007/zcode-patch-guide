@@ -18,7 +18,7 @@ npx --yes @electron/asar extract "<resources>/app.asar" unpack/app_extract
 
 ## 2. 锚点抽查(注入依赖体检)
 
-对解包产物 grep 各功能的**锚点卡**全表([../tok-badge/facts.md](../tok-badge/facts.md)、[../block-esc/facts.md](../block-esc/facts.md)):
+对解包产物 grep 各功能的**锚点卡**全表([../tok-badge/facts.md](../tok-badge/facts.md)、[../block-esc/facts.md](../block-esc/facts.md)、[../quota-balance/facts.md](../quota-balance/facts.md)):
 
 ```bash
 grep -c 'data-zcode-chat-loading-animate' unpack/app_extract/out/renderer/assets/styles-*.js
@@ -34,7 +34,7 @@ grep -c 'data-zcode-chat-loading-animate' unpack/app_extract/out/renderer/assets
 node inject/pack.mjs
 ```
 
-做的事:把 `inject/` 两个脚本注入 `unpack/app_extract/out/renderer/index.html` 的 head 闭合标签前(每脚本独立标记块包裹,幂等可重跑)→ 三重校验(round-trip 逐字节比对、标签计数、node --check)→ asar 打包到 `<resources>/app.asar.new`(约 1 分钟)。**不碰运行中的 app.asar**;任一校验失败立即中止、退出码非 0。
+做的事:把 `inject/` 三个脚本注入 `unpack/app_extract/out/renderer/index.html` 的 head 闭合标签前(每脚本独立标记块包裹,幂等可重跑);另把 `quota-main.cjs` 拷到 `<resources>/zcode-quota-main.cjs`(不进 asar),并在 `unpack/app_extract/out/main/index.js` 尾部追加幂等标记块 `import("file://…/zcode-quota-main.cjs")`(主进程额度轮询器)→ 三重校验(round-trip 逐字节比对、标签计数、node --check)→ asar 打包到 `<resources>/app.asar.new`(约 1 分钟)。**不碰运行中的 app.asar**;任一校验失败立即中止、退出码非 0。
 
 产物 SHA 复现规则(实测):
 - 同一 `unpack/` 状态连跑,产物**逐字节一致**(可作部署自检:重跑一次比 SHA)
@@ -46,7 +46,7 @@ node inject/pack.mjs
 node inject/pack.mjs --deploy
 ```
 
-= 上一步全部 + 把换装监视器(`apply-update.mjs`)与防降级指纹(`app.asar.new.sha256`)拷入 resources 目录并后台启动。此后:
+= 上一步全部 + 把换装监视器(`apply-update.mjs`)与防降级指纹(`app.asar.new.sha256`)拷入 resources 目录并后台启动(`zcode-quota-main.cjs` 已在打包时同步到同目录)。此后:
 
 1. **由用户完全退出 ZCode**。win:右键**托盘图标**退出——点窗口 × 只是隐藏到托盘,进程不死、不触发换装
 2. 监视器自动完成:等退出(1s 轮询)→ 复验 app.asar 仍是打包时指纹(等待期被官方升级覆盖则中止换装、新包改名 `.stale` 防降级)→ 换装(app.asar 改名保留为 `app.asar.old`)→ 按换装前抓取的启动参数自动重启 ZCode
@@ -58,7 +58,7 @@ ZCode 本来就没在运行时,监视器会立刻换装并跳过重启(`no relau
 
 ## 5. 验证
 
-见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed)。
+见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed;quota-balance 需本机 magpie 且选用第三方模型,打开上下文用量浮层看 `.zcode-quota-section`)。
 
 ## 6. 回滚
 
@@ -68,17 +68,18 @@ rm "<resources>/app.asar"        # 或先改名留档
 mv "<resources>/app.asar.old" "<resources>/app.asar"
 ```
 
-mac 重签见 environment.md。注入本身只动 index.html 一个文件,回滚 = 恢复打包前的 asar 即可。
+mac 重签见 environment.md。注入本身只动 index.html 与 main 入口尾部的标记块,回滚 = 恢复打包前的 asar 即可(`<resources>/zcode-quota-main.cjs` 可留:首次部署的 `.old` 是原始包、不含 import 标记块不会加载;`.old` 若是注入过的旧版本,额度段照常工作,同样无害)。
 
-## 维护者注意:三个已修坑(改工具链时勿回退)
+## 维护者注意:四个已修坑(改工具链时勿回退)
 
 1. **剥块正则吞 END 后一个换行**(pack.mjs):否则每重跑一轮残留一个 `\n`,产物跨轮漂移、连跑不再幂等
 2. **capture 排除 app-server 进程**(apply-update.mjs 的 captureMainCmdline):命令行含 `zcode.cjs`、无 `--type=` 的进程是 app-server,不排除的话换装后自动重启会拉起无 GUI 的 stdio 进程
 3. **一切 spawn 加 `windowsHide: true`**(apply-update.mjs 的 run):无控制台的后台进程 spawn 控制台程序(tasklist/powershell)不加它,Windows Terminal 为默认终端时**每秒弹一个终端窗口**(实测踩坑)
+4. **主进程入口注入「先剥旧标记块再追加」**(pack.mjs 的 QUOTA_BLOCK_RE):幂等与换 `ZCODE_RES` 后 file URL 更新都靠这条;直接 append 会叠出多份 import
 
 ## agent 红线汇总
 
-- 对 ZCode 的修改只经 `inject/` 工具链落地;解包产物里只有 pack.mjs 允许改(标记块之间的内容)
+- 对 ZCode 的修改只经 `inject/` 工具链落地;解包产物里 pack.mjs 只改 index.html 的注入标记块与 main 入口尾部的 `zcode-quota` 标记块
 - 注入 JS 的注释与字符串不得含 script 开闭标签、head 闭合标签、HTML 注释开符号(pack.mjs 注入前断言,防 HTML 解析器把内容当真标签毁掉整页)
 - 不替用户退出 ZCode;换装交给监视器,不手动 rename 正在运行的包
 - 版本变了必须重解包,不能拿旧 unpack 打包(降级)

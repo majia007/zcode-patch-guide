@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // 注入打包器(node 版,pack.py 的等价移植):把 inject/ 脚本清单(tok-badge.js +
-// block-esc.js)注入解包产物的 index.html(每脚本独立标记块,幂等可重跑)
+// block-esc.js + quota-balance.js)注入解包产物的 index.html(每脚本独立标记块,幂等可重跑)
 // → 三重校验 → asar 打包到 resources/app.asar.new
+// 另:quota-main.cjs 拷到 <resources>/zcode-quota-main.cjs,并在 out/main/index.js 尾部
+// 追加幂等标记块动态 import(主进程额度轮询器;换装不重打包也能更新)
 // 用法: node inject/pack.mjs [--deploy]
 //   默认: 注入 + 打包 app.asar.new(不碰运行中的 app.asar)
 //   --deploy: 另把 apply-update.mjs 与打包时 app.asar 指纹(app.asar.new.sha256)
@@ -16,14 +18,17 @@ import { createHash } from 'node:crypto'
 import { spawnSync, spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)))
 const EXT = join(REPO, 'unpack', 'app_extract')
 const INDEX = join(EXT, 'out', 'renderer', 'index.html')
+// 同步白名单:仅 tok-badge / block-esc / quota-balance(README「同步口径」)。
+// 白名单外补丁不移植;新增注入物须先入白名单。
 const SCRIPTS = [
   ['tok-badge', join(REPO, 'inject', 'tok-badge.js')],
   ['block-esc', join(REPO, 'inject', 'block-esc.js')],
+  ['quota-balance', join(REPO, 'inject', 'quota-balance.js')],
 ]
 
 const marker = (name) => ['<!-- zcode-' + name + ':begin -->', '<!-- zcode-' + name + ':end -->']
@@ -54,6 +59,12 @@ const detectRes = () => {
     ');自定义安装位置请设 ZCODE_RES=<安装目录>/resources')
 }
 const RES = process.env.ZCODE_RES || detectRes()
+// 主进程额度轮询器:运行文件放 resources 根目录(不进 asar,换装不重打包也能更新),
+// 由 out/main/index.js 尾部动态 import 绝对 file:// URL 引入。
+const MAIN_ENTRY = join(EXT, 'out', 'main', 'index.js')
+const QUOTA_MAIN_SRC = join(REPO, 'inject', 'quota-main.cjs')
+const QUOTA_MAIN_DST = join(RES, 'zcode-quota-main.cjs')
+const QUOTA_BLOCK_RE = /\n;\/\* zcode-quota:begin \*\/[\s\S]*?\/\* zcode-quota:end \*\/\n?/g
 if (!existsSync(INDEX)) fail('unpack missing: ' + INDEX +
   ' (先解包: npx --yes @electron/asar extract "<resources>/app.asar" unpack/app_extract,流程见 guide/common/pipeline.md)')
 
@@ -78,6 +89,25 @@ for (const [name, BEGIN, END, js] of blocks) {
 }
 html = html.replace('</head>', inject + '</head>')
 writeFileSync(INDEX, html, 'utf8')
+
+// 主进程额度轮询器:运行文件拷到 resources 根目录,再在主进程入口尾部追加动态 import。
+// 幂等:先剥旧标记块再追加(换 ZCODE_RES/安装目录时 URL 自动更新);find 式补丁不适用,
+// 因为入口是单行 ESM,尾部无稳定特征串。
+{
+  if (!existsSync(MAIN_ENTRY)) fail('main entry 不存在: ' + MAIN_ENTRY + ' (unpack 不完整?重新解包)')
+  if (!existsSync(RES)) fail('resources 目录不存在: ' + RES)
+  const chk = spawnSync('node', ['--check', QUOTA_MAIN_SRC], { stdio: 'inherit' })
+  if (chk.status !== 0) fail('quota-main.cjs 语法检查失败')
+  writeFileSync(QUOTA_MAIN_DST, readText(QUOTA_MAIN_SRC), 'utf8')
+  const url = pathToFileURL(QUOTA_MAIN_DST).href
+  const block = '\n;/* zcode-quota:begin */import(' + JSON.stringify(url) +
+    ').catch((e)=>console.error("[zcode-quota] load failed",e));/* zcode-quota:end */\n'
+  const mainSrc = readText(MAIN_ENTRY)
+  const next = mainSrc.replace(QUOTA_BLOCK_RE, '') + block
+  if (next !== mainSrc) writeFileSync(MAIN_ENTRY, next, 'utf8')
+  if (count(readText(MAIN_ENTRY), '/* zcode-quota:begin */') !== 1) fail('main 注入标记异常(zcode-quota)')
+  console.log('[0/2] main patch OK zcode-quota')
+}
 
 // 校验 1:注入块内容与源文件逐字节一致(round-trip)
 for (const [name, BEGIN, END, js] of blocks) {
