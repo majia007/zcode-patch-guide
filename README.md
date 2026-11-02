@@ -104,6 +104,6 @@ node inject/pack.mjs --deploy
 
 ## 已实测版本
 
-Windows,3.14.1 / 3.14.3 / 3.14.4 / 3.15.1 / 3.15.3 / 3.16.1 / 3.16.3 / 3.17.1——锚点稳定性先例与升级漂移记录见 `guide/common/method.md`。
+Windows,3.14.1 / 3.14.3 / 3.14.4 / 3.15.1 / 3.15.3 / 3.16.1 / 3.16.3 / 3.17.1 / 3.17.2——锚点稳定性先例与升级漂移记录见 `guide/common/method.md`。
 
-quota-balance 目前仅在 3.17.1 实测(依赖该版本的浮层结构与 magpie 本地接口);tok-badge / block-esc 的版本覆盖见上。
+quota-balance 在 3.17.1 / 3.17.2 实测(依赖该版本的浮层结构与 magpie 本地接口);tok-badge / block-esc 的版本覆盖见上。

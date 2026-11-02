@@ -1,8 +1,8 @@
 # tok-badge 事实卡
 
-功能:给 ZCode 对话界面加 token 统计。两处 UI:**流式速度位**(回复生成中,加载动画 spin 图标右侧的 `t/s`)与 **turn 统计行**(每条回复下方:`共 N tok · 缓内 x% · 缓外 y% · 输出 z% · 首字 F.s · 平均 v t/s · N 次请求 · 总耗时 D(等待 W · 响应 R · 执行 E) · 累计 C tok`)。
+功能:给 ZCode 对话界面加 token 统计。两处 UI:**流式速度位**(回复生成中,加载动画 spin 图标右侧的 `t/s`)与 **turn 统计行**(每条回复下方:`共 N tok · 缓内 x% · 缓外 y% · 输出 z% · 首字 F.s · 平均 v t/s · N 次请求 · 总耗时 D(等待 W · 响应 R · 执行 E) · 累计 C tok`)。失败/中断轮同样出统计行(token 段为估算值,见机制 10)。
 
-脚本:`inject/tok-badge.js`(单文件,自注入自挂载;头部 60 行注释是全量设计文档,排障/改版先读它)。
+脚本:`inject/tok-badge.js`(单文件,自注入自挂载;头部大段注释是全量设计文档,排障/改版先读它)。
 
 ## 注入依赖锚点卡
 
@@ -64,14 +64,19 @@ grep -Fc -- '--color-foreground-subtlest' unpack/app_extract/out/renderer/assets
 5. **权威校正**:turn 终态与会话打开时自呼双 RPC(`readSession`@zcode-session 给组归属+请求时长,`readSessionDebug`@zcode-agent 的 rounds 给 token 主源+生成段,与官方调试面板同源);`rounds` 是 agent 进程内存态,**重启后从 1 重编**——历史轮次的等待/平均/首字靠帧计持久化(localStorage)兜底
 6. **token 口径**:`total = input + output` 恒成立;`cacheRead/cacheWrite ⊆ input`;三桶=缓存读/非缓存/输出
 7. **部分视图防线**:快照落在 turn 中途或仍在流式时整组不写不锁 `authoritative`(否则中途值冻成终值);`authoritative` 置位后迟到/重放的 usage.delta 一律丢弃防重复计
-8. **速度增量两路**:遥测 `stream.chunk`(channel 只有 thought/text)+ conversation `row.delta`(path=`inputText`,工具输入 JSON 流);`path=text` 与遥测重复不计,`output.text` 是工具执行结果不计
+8. **速度增量两路**:遥测 `stream.chunk`(channel 只有 thought/text)+ conversation `row.delta`(path=`inputText`,工具输入 JSON 流);`path=text` 与遥测重复不计,`output.text` 是工具执行结果不计。速度按字符双桶折 token(见下「双桶换算注」);与官方调试面板 TPS 是另一口径(output×1000÷generationDurationMs,含首字等待),实时条刻意不对齐
 9. **段切(steer 段粒度)**:turn 中途收到后台任务通知时,渲染侧在通知行处切新可视卡(section id=通知行 msg id),官方卡头「已工作 X」显示的是**各卡段墙钟**而非整 turn 墙钟——tok-badge 500ms 扫 DOM 新增卡切段(detectSegSplit→steerSplit),旧 turn 后续帧经重定向落新卡;权威校正组键=段边界行 msg id(`info.source==='background_task'` 判通知合成行,锚点卡 background_task 条即此依赖)
+10. **零用量请求与失败轮**:tokens 全 0 的 assistant 行默认不是请求行(系统 timeline_event 等),入列会把 rounds zip 顶错一格、±5% 双校验整链拒绝。例外是真实请求的零用量行(失败/中断/空完成):带 `error` 字段,或 `semantics.kind=assistant_response` 且已完成——它们只进组行、**不进 rounds 对齐序列**;失败轮照出统计行,输出按 `readSession.parts` 的 reasoning+text 逐字符折算(`≈` 标估算),输入端无内容差不可估;整轮零用量时 token 段整段省略(避免「共 0 tok」与三个 0%)。「更晚轮」判定遇等累计平局时按组边界行时刻比较,否则前轮恒被判末轮、徽标钉到失败卡上
+
+## 双桶换算注
+
+字符→token 比率按语言分桶(单一全局比率在中英交替时偏近一倍:实测回归 流式 400+ vs 终值平均 200+)。常数来自 db 最小二乘实测(5,248 条纯文本/推理消息):**中文 ≈1.34 字符/token、非中文 ≈3.3**。**重拟合方法**:取最新 db 副本,按 `model_id` 分组——对 `output_tokens>0`、text/reasoning 字符数 ≥200 且无 tool part 的 assistant 消息(排除工具输入污染字符计数),解 `output = a×中文字符 + b×非中文字符` 的最小二乘,比率取 `1/a`、`1/b`;比率随模型 tokenizer 而变,换模型/供应商后按组重算,勿沿用跨模型合并值。流式期语言占比从 DOM 增量逐字分类的秒级滑窗取(帧本身不带文本,host zod `.strict()` 实证);已知占比 `f` 时混合比率 = `1/((1-f)/3.3 + f/1.34)`,无采样时退全局 EMA。工具输入(`inputText` JSON)恒走非中文桶。
 
 ## 验证清单(换装重启后)
 
 1. DevTools 控制台打开(Ctrl+Shift+I),执行 `localStorage.setItem('zcode:tok-badge:debug','1')` 后**刷新页面**
 2. 发一轮对话,console 应有 `[tok-badge] fact usage.delta / stream.chunk` 帧流
-3. 回复下方出现统计行;生成中加载图标右侧出现 `t/s` 速度位
+3. 回复下方出现统计行;生成中加载图标右侧出现 `t/s` 速度位;失败/中断的一轮也应出统计行(token 段带「估算」标记)
 4. `window.__tokDbg` 存在且计数在涨(facts/hit 系列字段)
 5. 同页 console 应有 `[block-esc] armed`(另一脚本,注入即打)
 

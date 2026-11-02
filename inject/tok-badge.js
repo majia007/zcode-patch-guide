@@ -152,7 +152,8 @@
             gapSum: 0, // 执行时间=请求间间隙累计（工具执行/审批/规划，官方墙钟含它、纯请求口径漏它）
             gapFrom: 0, // 间隙起点（closeActive 时刻），下一次 started / turn.terminal 结清入 gapSum
             durMs: 0, // turn.terminal 帧自带 durationMs（agent 侧算好的 turn 墙钟终值，官方「已工作 X」同口径）
-            cum: null }; // 到本条消息为止的会话累计（权威校正按消息序写入；null 时显示走会话账本）
+            cum: null, // 到本条消息为止的会话累计（权威校正按消息序写入；null 时显示走会话账本）
+            segStart: 0 }; // 组边界行 time.created（db 消息序；更晚轮判定的等累计兜底依据，0=未知）
       turns.set(tid, t);
       if (t.sid) { // 会话桶：配额只在本会话内淘最旧（流式中的跳过——会话内 turn 串行，防御性保留）
         var b = bySid.get(t.sid);
@@ -193,16 +194,19 @@
   // 流式增量入账（onFact 的 stream.chunk 与 onConvFrame 的 row.delta inputText 两路共用）：
   // 首增量落定等待段并开计时；长中断后的新簇重开计时段（段计时不含更久的中断，
   // 段内的簇间小间隙仍摊入分母）。thought/text 与工具输入都计（reasoning/tool_use ⊆ output）
-  function feedChars(t, n) {
+  function feedChars(t, n, isTool) {
     var now = Date.now();
-    if (!t.active) t.active = { startedAt: now, firstChunkAt: 0, segChars: 0, lastWall: 0 };
+    if (!t.active) t.active = { startedAt: now, firstChunkAt: 0, segChars: 0, segTool: 0, tokEst: 0, smpAll: 0, smpTool: 0, lastWall: 0 };
     var a = t.active;
     if (!a.firstChunkAt) {
       t.waitSum += Math.max(0, now - a.startedAt); a.firstChunkAt = now; a.segChars = 0;
       if (!t.ttft) t.ttft = Math.max(0, now - a.startedAt); // 首字=本轮第一段首增量延迟（帧滞后略高，终态以校正值为准）
     }
     else if (now - a.lastWall > SPEED_STALE_MS) { a.firstChunkAt = now; a.segChars = 0; }
+    // 段计时段（重）开时 token 估算状态一并归零：tokEst/smp* 与 segChars 同生命周期
+    if (a.segChars === 0) { a.segTool = 0; a.tokEst = 0; a.smpAll = 0; a.smpTool = 0; }
     a.segChars += n;
+    if (isTool) a.segTool = (a.segTool || 0) + n; // 工具输入 JSON：恒非中文桶（speedTextOf 双桶换算用）
     t.chars += n;
     a.lastWall = now;
   }
@@ -263,7 +267,7 @@
           var now0 = Date.now();
           if (!t.turnStart) t.turnStart = now0; // 墙钟起点只记首个请求（官方 header.startedAt 的近似，帧滞后略晚）
           if (t.gapFrom) { t.gapSum += Math.max(0, now0 - t.gapFrom); t.gapFrom = 0; } // 请求间间隙入「执行」
-          t.active = { startedAt: now0, firstChunkAt: 0, segChars: 0, lastWall: 0 };
+          t.active = { startedAt: now0, firstChunkAt: 0, segChars: 0, segTool: 0, tokEst: 0, smpAll: 0, smpTool: 0, lastWall: 0 };
           t.chars = 0;
           t.reqStarted++;
           if (t.sid) streamTidBySid.set(t.sid, tid);
@@ -366,7 +370,7 @@
     var tid0 = streamTidBySid.get(sid);
     var t = tid0 && turns.get(tid0);
     if (!t || t.terminal || t.authoritative) return;
-    feedChars(t, n);
+    feedChars(t, n, true); // inputText=工具调用输入 JSON：恒非中文桶
     schedulePaint(t.id);
   }
   function handleData(d) {
@@ -622,10 +626,20 @@
         if (openG && openG.segEnd == null) openG.segEnd = tcr;
         cur = info.messageId; curStart = tcr; g = null; continue;
       }
-      // tokens 全 0 的 assistant 行（系统 timeline_event 等，db 实证 7/8 会话含）不是请求行：
-      // 入列会把 rounds zip 顶错一格、±5% 双校验从首对起整链拒绝，重开后等待/平均/首字全写不回
-      if (info.role !== 'assistant' || !info.tokens
-        || !(info.tokens.total || (info.tokens.input | 0) + (info.tokens.output | 0))) continue;
+      // tokens 全 0 的 assistant 行默认不是请求行（系统 timeline_event 等，db 实证 7/8 会话含）：
+      // 入列会把 rounds zip 顶错一格、±5% 双校验从首对起整链拒绝、genCnt=0 等待/平均/首字全写不回——
+      // 重开路径无实时帧计兜底，症状是历史统计条永远缺这三项（实测 matched 0/12 → 排除后 11/11）。
+      // 例外=真实请求的零用量行（失败/中断/空完成）：error 字段，或 semantics.kind=assistant_response
+      // 且已完成。失败请求也进上下文（rollout request.messages 实证：半截回复原样出现在下一请求），
+      // db 里它记 0 token 但仍是真实请求（model_usage/turn_usage 的 request 计数含它）：跳过则整轮
+      // 无 T——失败轮无统计条，且上一轮被 hasNewerRound 判成"末轮"、徽标被钉到失败卡上（实测错位）。
+      // 零用量行只进组行，不进 rounds 对齐序列：agent 只在 model_request_completed 记 rounds
+      // （zcode.cjs observeSessionDebug 实证），失败请求无 round，进 seq 会把后续 zip 全顶错
+      if (info.role !== 'assistant' || !info.tokens) continue;
+      var hasTok = !!(info.tokens.total || (info.tokens.input | 0) + (info.tokens.output | 0));
+      var reqZero = !hasTok && (info.error
+        || (info.semantics && info.semantics.kind === 'assistant_response' && info.time && info.time.completed));
+      if (!hasTok && !reqZero) continue;
       var pid = info.parentID || info.parentMessageId || cur;
       if (!pid) continue;
       var uid = synInfo.has(pid) ? pid : (cur || pid); // 组键=当前段边界；合成行独立卡（parentID 指向合成行）取 pid
@@ -635,14 +649,36 @@
         groups.set(uid, g); openG = g;
       }
       g.tkTotal++;
-      if (!info.time || !info.time.completed || !info.time.created) continue; // 流式中的末条不完整
+      if (!info.time || !info.time.created) continue; // 流式中的末条不完整
+      if (hasTok && !info.time.completed) continue;
       var tk = info.tokens;
+      // 零用量请求（失败/中断）的输出估算：db 实证失败行 token 恒 0（cancelled 243+error 72 条
+      // input/output 全 0），真实消耗无处可查——但部分内容（reasoning+text）随 readSession 的
+      // parts 返回，按实测比率（中文 1.34 / 非中文 3.3 chars/token，db 最小二乘；重拟合方法见
+      // 仓库 guide/tok-badge/facts.md 双桶换算注）
+      // 逐字符折算。输入端未上报、无内容差可推，不可估——显示时只标输出，≈ 号注明估算
+      var est = 0;
+      if (reqZero && mm.parts) {
+        for (var eP = 0; eP < mm.parts.length; eP++) {
+          var ePt = mm.parts[eP] || {};
+          if (ePt.type !== 'text' && ePt.type !== 'reasoning') continue;
+          var eTxt = ePt.text || ePt.content || '';
+          if (!eTxt) continue;
+          var eCj = 0;
+          for (var eI = 0; eI < eTxt.length; eI++) {
+            var eCd = eTxt.charCodeAt(eI);
+            if ((eCd >= 0x3400 && eCd <= 0x4dbf) || (eCd >= 0x4e00 && eCd <= 0x9fff) || (eCd >= 0xf900 && eCd <= 0xfaff)) eCj++;
+          }
+          est += eCj * TOK_PER_CHAR_CJK + (eTxt.length - eCj) * TOK_PER_CHAR_OTHER;
+        }
+      }
       var row = { inp: tk.input | 0, out: tk.output | 0, cr: (tk.cache && tk.cache.read) | 0,
-                  tt: tk.total || ((tk.input | 0) + (tk.output | 0)),
-                  total: Math.max(0, info.time.completed - info.time.created),
-                  c0: info.time.created, c1: info.time.completed, // db 起止（组墙钟/间隙计算用）
-                  matched: false, gen: 0, wait: 0 };
-      g.rows.push(row); g.ids.push(info.messageId); seq.push(row);
+                  tt: hasTok ? (tk.total || ((tk.input | 0) + (tk.output | 0))) : 0,
+                  total: Math.max(0, (info.time.completed || info.time.created) - info.time.created),
+                  c0: info.time.created, c1: info.time.completed || info.time.created, // db 起止（组墙钟/间隙计算用；零用量行缺终点按起点闭合）
+                  matched: false, gen: 0, wait: 0, zero: !hasTok, est: Math.round(est) };
+      g.rows.push(row); g.ids.push(info.messageId);
+      if (hasTok) seq.push(row); // 零用量行无 round 可配（rounds 只记 completed），不进对齐序列
     }
     // 第二遍：rounds 尾部对齐（上限 200，早期轮无计时），out+inp 双校验防 zip 错位。
     // 命中行的 token 换用 rounds.usage——调试面板同源同值，免疫消息侧 tokens 的陈旧快照；
@@ -686,7 +722,7 @@
       if (streaming) return;
       if (!gv.rows.length) return; // 全组未完成：无可写（流式恢复期，重试/terminal 兜底）
       if (gv.rows.length < gv.tkTotal) { needRetry = true; return; } // host 落盘滞后：稍后重取，不写半个 turn
-      var inp = 0, out = 0, cr = 0, tt = 0, gen = 0, wait = 0, genCnt = 0, dur = 0;
+      var inp = 0, out = 0, cr = 0, tt = 0, gen = 0, wait = 0, genCnt = 0, dur = 0, zeroWait = 0, estSum = 0;
       var minC = 0, maxC = 0;
       for (var r2 = 0; r2 < gv.rows.length; r2++) {
         var rw = gv.rows[r2];
@@ -694,6 +730,8 @@
         if (!minC || rw.c0 < minC) minC = rw.c0;
         if (rw.c1 > maxC) maxC = rw.c1;
         if (rw.matched) { gen += rw.gen; wait += rw.wait; genCnt++; }
+        if (rw.zero) zeroWait += rw.total; // 零用量请求（失败/中断）整段计等待：无生成段可配，与 closeActive 无 chunk 规则一致
+        if (rw.est) estSum += rw.est; // 估算输出（零用量行专属，真值行恒 0）
       }
       // 段墙钟=段起点→min(段终点, 末请求 completed)（官方卡头口径，见第一遍注释）；
       // 无段起点（旧数据缺边界时间戳）退 db 请求口径首→末。间隙=墙钟−Σ请求时长（工具
@@ -730,7 +768,9 @@
       t.total = { inp: inp, out: out, cr: cr, tt: tt };
       t.reqCnt = gv.rows.length;
       t.reqDurSum = dur;
+      t.estOut = estSum; // 零用量请求（失败/中断）输出 token 估算和（statsText ≈ 标注；不进权威累计 cum）
       t.cum = gv.cumUpTo; // 累计快照：本组及其前各组已完成请求的 token 总和
+      if (gv.segStart) t.segStart = gv.segStart; // 组边界行时刻：hasNewerRound 等累计平局（零用量轮不加 token）时的更晚判定依据
       if (!t.reqs.length) t.reqs.push({ finalized: true });
       t.terminal = true;
       t.authoritative = true;
@@ -742,8 +782,10 @@
       // 赋值之后：rec0.r 优先级高于 wall，并进同一条件会被旧值顶回
       if (wall > t.durMs) t.durMs = wall;
       if (genCnt) { // rounds 命中（重启后产生的轮次）：db 口径覆盖帧计，并回存持久化（更准）
-        t.genSum = gen; t.waitSum = wait;
-        tmSave(sid, { v: 2, m: t.msgId, d: uid, g: gen, w: wait, f: gv.rows[0].matched ? gv.rows[0].wait : t.ttft, p: gapDb, r: t.durMs || (rec0 && rec0.r) || wall || 0 });
+        // 零用量请求（失败/中断）无 round 可配但占真实时长：整段并进等待（无生成段可配），
+        // 「等待+响应+执行=总耗时」恒等式在含失败请求的轮也成立
+        t.genSum = gen; t.waitSum = wait + zeroWait;
+        tmSave(sid, { v: 2, m: t.msgId, d: uid, g: gen, w: wait + zeroWait, f: gv.rows[0].matched ? gv.rows[0].wait : t.ttft, p: gapDb, r: t.durMs || (rec0 && rec0.r) || wall || 0 });
       } else {
         // 历史轮次：rounds 里没有，读回帧计终值（g/w/f；durMs/gapSum 上面已 db 兜底）。
         // w+g 等比缩放到「总耗时−执行段」（吞间隙把等待顶大/页面未开帧计缺失/帧成簇滞后
@@ -757,7 +799,7 @@
             t.genSum = (rec0.g || 0) * sc; t.waitSum = (rec0.w || 0) * sc;
           } else { t.genSum = rec0.g; t.waitSum = rec0.w; }
           if (rec0.f) t.ttft = rec0.f;
-        }
+        } else if (zeroWait) t.waitSum = zeroWait; // 无帧计记录（tm 丢失）时零用量时长 db 值兜底；rec0 在时不能加——failed 帧经 closeActive 已整段计入帧计 wait，再加=双计
       }
       if (gv.rows[0].matched) t.ttft = gv.rows[0].wait; // 首字终值 = 首请求等待段（db 口径 ≈ TTFT）
       schedulePaint(t.id);
@@ -815,7 +857,18 @@
     return (p >= 10 ? p.toFixed(0) : p.toFixed(1)) + '%';
   }
 
-  /* ---------- 速度：贴加载槽 spin 图标右侧（响应至今平均，非滑窗瞬时） ---------- */
+  /* ---------- 速度：贴加载槽 spin 图标右侧（响应至今平均，非滑窗瞬时） ----------
+     口径=纯解码速率：首 chunk→now，刻意不含首字等待（大输入排队+prefill 可达分钟级）与
+     段内停顿。官方调试面板 TPS 是另一口径（agent qan 实证=output×1000÷generationDurationMs
+     ≈请求墙钟）：实测同轮 实时 57 vs 官方 36.7（7796tok/218s，差的 67s 全在首 chunk 前），
+     两数各表其义，实时条刻意不对齐（用户明示要实时解码速率，勿再改口径）。
+     字符→token 换算分双桶（单一全局比率在中英交替时必偏：实测回归 流式 400+ vs 终值平均 200+）。
+     常数来自 db 最小二乘拟合（按 model_id 分组重拟合，方法见仓库 guide/tok-badge/facts.md 双桶换算注）：中文 ≈1.34 字符/token、非中文 ≈3.3，差 2.5 倍。
+     分桶依据：工具输入走 inputText 帧（自带 JSON 文本=恒非中文桶）；stream.chunk 事实帧无文本
+     （host zod .strict() 实证），流式文本语言混比只能从 DOM 估（ensureSpeed：DOM 增量逐字分类
+     入秒级滑窗，写 t.mixEma——中英混合的拍按 f 线性分摊，f 估准即等价逐字符分桶）。换算按
+     「自上次采样以来的增量」逐拍入账 tokEst——语言切换 1~2 拍生效，不用整段历史均摊 */
+  var TOK_PER_CHAR_CJK = 1 / 1.34, TOK_PER_CHAR_OTHER = 1 / 3.3;
   function speedTextOf(t) {
     if (!t || !t.active) return '';
     var now = Date.now();
@@ -824,7 +877,15 @@
     if (!a.firstChunkAt || now - a.lastWall > SPEED_STALE_MS) return '等待响应';
     var dur = now - a.firstChunkAt;
     if (dur < 600) return '等待响应'; // 段刚起步，读数未稳
-    var tps = a.segChars / dur * 1000 / c2t;
+    var tool = a.segTool || 0, all = a.segChars;
+    var dStream = (all - tool) - ((a.smpAll || 0) - (a.smpTool || 0)); // 流式桶自上次采样的增量
+    var dTool = tool - (a.smpTool || 0);
+    var f = t.mixEma;
+    // 混合 chars/token = 1/((1-f)/3.3 + f/1.34)；无 DOM 采样（混比未知）退旧全局 EMA c2t
+    var cpc = f == null ? c2t : 1 / ((1 - f) * TOK_PER_CHAR_OTHER + f * TOK_PER_CHAR_CJK);
+    a.tokEst = (a.tokEst || 0) + Math.max(0, dStream) / cpc + Math.max(0, dTool) / TOK_PER_CHAR_OTHER;
+    a.smpAll = all; a.smpTool = tool;
+    var tps = a.tokEst / dur * 1000;
     if (tps <= 0) return '等待响应';
     return (tps >= 10 ? tps.toFixed(0) : tps.toFixed(1)) + ' t/s';
   }
@@ -839,7 +900,31 @@
       var pane = anim.closest('[data-session-id]');
       var sid = pane && pane.getAttribute('data-session-id');
       var tid = sid && streamTidBySid.get(sid);
-      var txt = speedTextOf(tid && turns.get(tid));
+      var st = tid && turns.get(tid);
+      // 语言混比跟踪（近似字符级「中英分开算」）：流式期间 section 的新增文本≈纯输出内容
+      // （按钮等 UI 文案不增长），对 DOM 增量逐字分类入「近期窗」（每拍衰减 6%≈秒级滑窗），
+      // f=近期窗中文占比——语言切换 1~2 拍内生效。帧不带文本（zod .strict()），字符计数仍以
+      // 帧为准，DOM 只供语言占比；中英混合的拍按 f 线性分摊，f 估准即等价逐字符分桶（线性）
+      if (st && st.active) {
+        var sec0 = anim.closest('section[data-turn-id]');
+        var body = sec0 ? (sec0.textContent || '') : '';
+        var dl = st.domLen == null ? -1 : st.domLen;
+        if (body.length >= dl && body.length - dl <= 4000) { // 连续增长才折增量（大跳变多为重渲染，弃样重建）
+          var add = body.slice(dl);
+          if (add.length) {
+            var cj = 0;
+            for (var ci = 0; ci < add.length; ci++) {
+              var cd = add.charCodeAt(ci);
+              if ((cd >= 0x3400 && cd <= 0x4dbf) || (cd >= 0x4e00 && cd <= 0x9fff) || (cd >= 0xf900 && cd <= 0xfaff)) cj++;
+            }
+            st.recentCjk = (st.recentCjk || 0) * 0.94 + cj;
+            st.recentAll = (st.recentAll || 0) * 0.94 + add.length;
+          }
+        } else { st.recentCjk = 0; st.recentAll = 0; } // 首见/收缩/跳变：清窗重积累
+        st.domLen = body.length;
+        if ((st.recentAll || 0) >= 120) st.mixEma = st.recentCjk / st.recentAll; // 样本太少不出比值（防小样本噪声）
+      }
+      var txt = speedTextOf(st);
       var span = anim.querySelector('[data-zcode-tok-speed]');
       if (!span) {
         if (!txt) continue;
@@ -867,20 +952,28 @@
     if (!t.reqs.length) return streaming ? '第 1 次请求…' : '';
     var fresh = Math.max(0, d.inp - d.cr); // 缓外 = 输入 − 缓内（含缓存写入与新鲜输入）
     var tot = d.tt || (d.inp + d.out);
-    var s = '共 <b>' + k(tot) + '</b> tok · 缓内 <b>' + k(d.cr) + '</b> (' + pct(d.cr, tot)
-      + ') · 缓外 <b>' + k(fresh) + '</b> (' + pct(fresh, tot)
-      + ') · 输出 <b>' + k(d.out) + '</b> (' + pct(d.out, tot) + ')';
+    // 零用量轮（首请求即失败/中断，db 实证记 0 token）：token 段整段省略——「共 0 tok」
+    // 和三个 0% 全是噪音；其后各段分隔符一律 (s?' · ':'')，省略后行首不悬空「·」
+    var s = tot > 0
+      ? ('共 <b>' + k(tot) + '</b> tok · 缓内 <b>' + k(d.cr) + '</b> (' + pct(d.cr, tot)
+        + ') · 缓外 <b>' + k(fresh) + '</b> (' + pct(fresh, tot)
+        + ') · 输出 <b>' + k(d.out) + '</b> (' + pct(d.out, tot) + ')')
+      : '';
     // 首字在前、平均在后：首字先给出本轮第一段 TTFT；平均速度 = 总输出 token ÷ 纯生成耗时
     // （各请求首 chunk→末 chunk 累加，等待不计入，与耗时括号内「响应」段同分母）
-    if (t.ttft > 0) s += ' · 首字 <b>' + (t.ttft / 1000).toFixed(1) + '</b>s';
-    if (d.out > 0 && t.genSum > 0) {
-      var tps = d.out / (t.genSum / 1000);
-      s += ' · 平均 <b>' + (tps >= 10 ? tps.toFixed(0) : tps.toFixed(1)) + '</b> t/s';
+    if (t.ttft > 0) s += (s ? ' · ' : '') + '首字 <b>' + (t.ttft / 1000).toFixed(1) + '</b>s';
+    var outForAvg = d.out > 0 ? d.out : (t.estOut || 0); // 零用量轮用估算输出配生成段得平均（≈ 标注）
+    if (outForAvg > 0 && t.genSum > 0) {
+      var tps = outForAvg / (t.genSum / 1000);
+      s += (s ? ' · ' : '') + (d.out > 0 ? '平均' : '平均 ≈') + ' <b>' + (tps >= 10 ? tps.toFixed(0) : tps.toFixed(1)) + '</b> t/s';
     }
+    // 零用量请求（失败/中断）的估算输出段：db 记 0 无真值，按部分内容×实测比率折算；组内同时
+    // 有真值行时 token 段已是真值，估算作附加段「失败请求 ≈」标出
+    if (t.estOut > 0) s += (s ? ' · ' : '') + (tot > 0 ? '失败请求 ≈' : '输出 ≈') + k(t.estOut) + ' tok(估算)';
     var cnt = t.reqCnt || t.reqs.length;
     // 流式中末请求尚未入账：显示进行中序号而非已完成数（N 取 started 计数，帧滞后时已完成数+1 兜底）
     if (streaming) s += ' · 第 ' + Math.max(cnt + 1, t.reqStarted || 0) + ' 次请求…';
-    else if (cnt) s += ' · ' + cnt + ' 次请求';
+    else if (cnt) s += (s ? ' · ' : '') + cnt + ' 次请求';
     // 总耗时口径=视觉段墙钟（官方卡头「已工作 X」实证即此口径：段起点→段终点，含请求间
     // 执行时间）。流式中=段起点（首请求 started 帧/通知卡出现时刻的近似）→now 单调走表；
     // 完成=turn.terminal 帧 durationMs（未段切 turn 同源终值；段切过的 turn 改用
@@ -898,7 +991,7 @@
     var dur = t.durMs || (t.turnStart && !t.terminal ? nowMs - t.turnStart : 0)
       || ((t.genSum + t.waitSum + t.gapSum) || t.reqDurSum);
     if (dur > 0) {
-      s += ' · 总耗时 <b>' + fmtDur(dur) + '</b>';
+      s += (s ? ' · ' : '') + '总耗时 <b>' + fmtDur(dur) + '</b>';
       var wait = t.waitSum || 0, gen = t.genSum || 0, gap = t.gapSum || 0;
       var a = t.active;
       if (t.terminal) {
@@ -926,7 +1019,7 @@
     // 累计 = 到本条消息为止的会话消耗：完成 turn 用权威校正按消息序累积的快照（不随后续
     // 轮次增长漂移）；流式 turn 快照未定，用会话账本现值——此刻账本的全部增量都属于本条
     var cum = (t.cum != null) ? t.cum : (sessCum.get(t.sid) || {}).tt;
-    if (cum > 0) s += ' · 累计 <b>' + k(cum) + '</b> tok';
+    if (cum > 0) s += (s ? ' · ' : '') + '累计 <b>' + k(cum) + '</b> tok';
     return s;
   }
 
@@ -944,7 +1037,12 @@
     if (b) b.forEach(function (bt, tid2) {
       var t2 = turns.get(tid2);
       if (!t2 || t2 === t) return;
-      if (t2.cum != null && t.cum != null) { if (t2.cum > t.cum) newer = true; }
+      if (t2.cum != null && t.cum != null) {
+        if (t2.cum > t.cum) newer = true;
+        // 等累计平局（零用量失败轮不加 token，cum 与前轮相等）：比较组边界行时刻定更晚，
+        // 否则前轮恒判「末轮」、徽标被钉到失败轮的卡上（实测错位）
+        else if (t2.segStart && t.segStart && t2.segStart > t.segStart) newer = true;
+      }
       else if (!t2.terminal || t2.active) newer = true;
     });
     return newer;
