@@ -90,5 +90,5 @@ grep -Fc -- '--color-foreground-subtlest' unpack/app_extract/out/renderer/assets
 
 - `readSessionDebug.rounds` 每会话上限 200 轮:更早轮次无生成段(不计入平均/等待/首字;总耗时不受限)
 - `readSession` messageLimit 400 条:更早消息不进权威校正
-- 滚出虚拟化窗口且超出最近 12 turn 的旧行,统计不保(重贴面有限)
+- 滚出虚拟化窗口的行不贴统计条;滚回或侧栏 tab 切回重挂后,由 500ms 扫描的裸 section 补贴补回(不再受「最近 12 turn + 流式轮」重贴面限制;旧版超窗口的早期轮重挂后永久缺失,2026-11-03 修)
 - host 换版改了通道/方法/帧形态时**静默不恢复**(不报错)——升级后按锚点卡抽查即为此设

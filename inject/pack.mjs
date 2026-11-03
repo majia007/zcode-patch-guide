@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 注入打包器(node 版,pack.py 的等价移植):把 inject/ 脚本清单(tok-badge.js +
-// block-esc.js + quota-balance.js)注入解包产物的 index.html(每脚本独立标记块,幂等可重跑)
+// block-esc.js + quota-balance.js + request-marker.js)注入解包产物的 index.html(每脚本独立标记块,幂等可重跑)
 // → 三重校验 → asar 打包到 resources/app.asar.new
 // 另:quota-main.cjs 拷到 <resources>/zcode-quota-main.cjs,并在 out/main/index.js 尾部
 // 追加幂等标记块动态 import(主进程额度轮询器;换装不重打包也能更新)
@@ -23,12 +23,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)))
 const EXT = join(REPO, 'unpack', 'app_extract')
 const INDEX = join(EXT, 'out', 'renderer', 'index.html')
-// 同步白名单:仅 tok-badge / block-esc / quota-balance(README「同步口径」)。
+// 同步白名单:仅 tok-badge / block-esc / quota-balance / request-marker(README「同步口径」)。
 // 白名单外补丁不移植;新增注入物须先入白名单。
 const SCRIPTS = [
   ['tok-badge', join(REPO, 'inject', 'tok-badge.js')],
   ['block-esc', join(REPO, 'inject', 'block-esc.js')],
   ['quota-balance', join(REPO, 'inject', 'quota-balance.js')],
+  ['request-marker', join(REPO, 'inject', 'request-marker.js')],
 ]
 
 const marker = (name) => ['<!-- zcode-' + name + ':begin -->', '<!-- zcode-' + name + ':end -->']
@@ -87,7 +88,9 @@ let inject = ''
 for (const [name, BEGIN, END, js] of blocks) {
   inject += BEGIN + '\n' + S_OPEN + '\n' + js + '\n' + S_CLOSE + '\n' + END + '\n'
 }
-html = html.replace('</head>', inject + '</head>')
+// 用函数替换: 注入内容可能含 `$&`/`$'` 等 String.replace 的替换模式(如 request-marker 的
+// `__reactFiber$'`), 直接传串会被展开成匹配上下文,与逐字节 round-trip 校验必然冲突。
+html = html.replace('</head>', () => inject + '</head>')
 writeFileSync(INDEX, html, 'utf8')
 
 // 主进程额度轮询器:运行文件拷到 resources 根目录,再在主进程入口尾部追加动态 import。

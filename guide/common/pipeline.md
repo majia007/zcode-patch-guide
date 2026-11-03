@@ -18,7 +18,7 @@ npx --yes @electron/asar extract "<resources>/app.asar" unpack/app_extract
 
 ## 2. 锚点抽查(注入依赖体检)
 
-对解包产物 grep 各功能的**锚点卡**全表([../tok-badge/facts.md](../tok-badge/facts.md)、[../block-esc/facts.md](../block-esc/facts.md)、[../quota-balance/facts.md](../quota-balance/facts.md)):
+对解包产物 grep 各功能的**锚点卡**全表([../tok-badge/facts.md](../tok-badge/facts.md)、[../block-esc/facts.md](../block-esc/facts.md)、[../quota-balance/facts.md](../quota-balance/facts.md)、[../request-marker/facts.md](../request-marker/facts.md)):
 
 ```bash
 grep -c 'data-zcode-chat-loading-animate' unpack/app_extract/out/renderer/assets/styles-*.js
@@ -34,7 +34,7 @@ grep -c 'data-zcode-chat-loading-animate' unpack/app_extract/out/renderer/assets
 node inject/pack.mjs
 ```
 
-做的事:把 `inject/` 三个脚本注入 `unpack/app_extract/out/renderer/index.html` 的 head 闭合标签前(每脚本独立标记块包裹,幂等可重跑);另把 `quota-main.cjs` 拷到 `<resources>/zcode-quota-main.cjs`(不进 asar),并在 `unpack/app_extract/out/main/index.js` 尾部追加幂等标记块 `import("file://…/zcode-quota-main.cjs")`(主进程额度轮询器)→ 三重校验(round-trip 逐字节比对、标签计数、node --check)→ asar 打包到 `<resources>/app.asar.new`(约 1 分钟)。**不碰运行中的 app.asar**;任一校验失败立即中止、退出码非 0。
+做的事:把 `inject/` 四个脚本注入 `unpack/app_extract/out/renderer/index.html` 的 head 闭合标签前(每脚本独立标记块包裹,幂等可重跑);另把 `quota-main.cjs` 拷到 `<resources>/zcode-quota-main.cjs`(不进 asar),并在 `unpack/app_extract/out/main/index.js` 尾部追加幂等标记块 `import("file://…/zcode-quota-main.cjs")`(主进程额度轮询器)→ 三重校验(round-trip 逐字节比对、标签计数、node --check)→ asar 打包到 `<resources>/app.asar.new`(约 1 分钟)。**不碰运行中的 app.asar**;任一校验失败立即中止、退出码非 0。
 
 产物 SHA 复现规则(实测):
 - 同一 `unpack/` 状态连跑,产物**逐字节一致**(可作部署自检:重跑一次比 SHA)
@@ -58,7 +58,7 @@ ZCode 本来就没在运行时,监视器会立刻换装并跳过重启(`no relau
 
 ## 5. 验证
 
-见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed;quota-balance 需本机 magpie 且选用第三方模型,打开上下文用量浮层看 `.zcode-quota-section`)。
+见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed;quota-balance 需本机 magpie 且选用第三方模型,打开上下文用量浮层看 `.zcode-quota-section`;request-marker 打开含工具调用的会话看行左侧 `#N` 标签与灰色竖条)。
 
 ## 6. 回滚
 

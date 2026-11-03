@@ -1218,6 +1218,7 @@
 
   // 虚拟化列表会卸载/重挂行、React 会清外来节点：500ms 扫描统一重贴（先校验宿主清残留）。
   // 重贴面 = 最近 12 个 turn + 各会话流式中的 turn（多面板并发流式时各会话的活 turn 都保贴）
+  // + DOM 里现挂的裸 section（见下方补贴注释）
   setInterval(function () {
     ensureStyle();
     validateBadges();
@@ -1232,5 +1233,25 @@
       if (t.active && !t.terminal && pick.indexOf(t) < 0) pick.push(t);
     }
     pick.forEach(function (t) { ensureBadge(t.id); });
+    // 裸 section 补贴（事故史 2026-11-03）：重贴面按 bornAt 只取最近 12 个 turn，而侧栏
+    // subagent tab 切走会把面板内容整体卸载（CDP 实证：inactive 面板 section 数=0、rect 0x0），
+    // 切回重挂出的 section 是全新节点、徽标随旧节点消失——turn 若不在重贴面（该轮早已完成
+    // 且其后又积累了 ≥12 个 turn 记录：打开长会话/别的会话即可占满）就永远没人再补，徽标
+    // 永久缺失，只有关掉面板重开（重开触发权威校正 schedulePaint）才出现。这里反查 DOM：
+    // 收集现挂且无徽标的 section id，再对 turns 扫一遍把所属 turn 重贴——空表时零成本，
+    // 不依赖 turn 的新鲜度，虚拟化滚回重挂同理受益
+    var bare = null;
+    var secsNow = document.querySelectorAll('section[data-turn-id]');
+    for (var b0 = 0; b0 < secsNow.length; b0++) {
+      if (!secsNow[b0].querySelector('[data-zcode-tok-badge]')) (bare || (bare = [])).push(secsNow[b0].getAttribute('data-turn-id'));
+    }
+    if (bare) {
+      turns.forEach(function (t2) {
+        if (!t2.sid || !t2.reqs.length) return; // 无请求记录=statsText 本就为空（无用量轮），不补贴
+        for (var b1 = 0; b1 < bare.length; b1++) {
+          if (bare[b1] === t2.domId || bare[b1] === t2.msgId) { ensureBadge(t2.id); break; }
+        }
+      });
+    }
   }, 500);
 })();

@@ -6,7 +6,7 @@
 
 > 按 https://github.com/majia007/zcode-patch-guide 的说明,为 ZCode 加入 token 统计条(tok-badge)的功能
 
-- 想要别的功能,把功能名换掉即可:`ESC 拦截(block-esc)`、`剩余额度(quota-balance)`,也可以都要
+- 想要别的功能,把功能名换掉即可:`ESC 拦截(block-esc)`、`剩余额度(quota-balance)`、`请求分组标记(request-marker)`,也可以都要
 - 前提:agent 需要在装了 ZCode 的这台机器上运行,能执行命令、读写文件
 
 不想经 agent 也可以手动执行,见[快速开始](#快速开始手动)。
@@ -24,15 +24,16 @@ node inject/pack.mjs --deploy
 
 回滚:把 `<resources>/app.asar.old` 改名回 `app.asar` 重启即可(详见 `guide/common/pipeline.md`)。
 
-功能开关(DevTools 控制台,改后刷新):`localStorage.setItem('zcode:tok-badge:enabled','0')` / `localStorage.setItem('zcode:block-esc:enabled','0')` / `localStorage.setItem('zcode:quota-balance:enabled','0')`。
+功能开关(DevTools 控制台,改后刷新):`localStorage.setItem('zcode:tok-badge:enabled','0')` / `localStorage.setItem('zcode:block-esc:enabled','0')` / `localStorage.setItem('zcode:quota-balance:enabled','0')` / `localStorage.setItem('zcode:request-marker:enabled','0')`。
 
 ## 功能
 
-给 ZCode 桌面客户端打本地补丁的**注入工具链 + 操作手册**,目前提供三个功能:
+给 ZCode 桌面客户端打本地补丁的**注入工具链 + 操作手册**,目前提供四个功能:
 
 - **tok-badge** — 对话气泡旁的 token 用量/耗时统计
 - **block-esc** — 防误触的 ESC 条件拦截
 - **quota-balance** — 上下文用量浮层里的第三方剩余额度段(需要本机运行 magpie 聚合器,见 [guide/quota-balance/facts.md](guide/quota-balance/facts.md))
+- **request-marker** — 步骤流按模型请求分组标记(`#N` 标签 + 灰色竖条,见 [guide/request-marker/facts.md](guide/request-marker/facts.md))
 
 全部修改经解包→注入→打包→换装落地,自动保留回滚包。
 
@@ -59,6 +60,7 @@ node inject/pack.mjs --deploy
 | token 统计(tok-badge) | + `guide/tok-badge/facts.md`(锚点卡+验证清单) |
 | ESC 拦截(block-esc) | + `guide/block-esc/facts.md` |
 | 剩余额度(quota-balance) | + `guide/quota-balance/facts.md`(需本机 magpie,地址从 ZCode provider 配置解析,默认 `127.0.0.1:3425`) |
+| 请求分组标记(request-marker) | + `guide/request-marker/facts.md` |
 | 锚点 MISS / 升级后功能失效 / 需要重新定位 | `guide/common/method.md`(渔:锚点怎么选、漂移怎么甄别重定位) |
 
 三条硬红线(详版在 pipeline.md 末尾):
@@ -78,12 +80,14 @@ node inject/pack.mjs --deploy
 │   │   └── method.md       # 渔:minified 阅读法、锚点规范与稳定性判据、MISS 甄别、漂移重定位
 │   ├── tok-badge/facts.md  # token 统计:锚点卡 24 条 + 机制最小结论 + 验证清单
 │   ├── block-esc/facts.md  # ESC 拦截:锚点卡 + 机制 + 验证清单
-│   └── quota-balance/facts.md  # 剩余额度:锚点卡 + 注入链 + 验证/排障
+│   ├── quota-balance/facts.md  # 剩余额度:锚点卡 + 注入链 + 验证/排障
+│   └── request-marker/facts.md # 请求分组标记:锚点卡 + 机制 + 验证清单
 └── inject/
     ├── tok-badge.js        # 徽标脚本(手工维护物;头注释=全量设计文档)
     ├── block-esc.js        # ESC 拦截脚本
     ├── quota-balance.js    # 渲染端额度段脚本(挂到上下文容量浮层)
     ├── quota-main.cjs      # 主进程额度轮询器(拷到 resources 根目录,入口尾部动态 import)
+    ├── request-marker.js   # 请求分组标记脚本(React fiber 读行数据,打 data-zrq-*)
     ├── pack.mjs            # 注入打包器:注入 index.html → 挂主进程模块 → 三重校验 → asar 打包;--deploy 挂换装监视器
     └── apply-update.mjs    # 换装监视器:等退出→防降级校验→换装→按原命令行重启
 ```
@@ -92,13 +96,14 @@ node inject/pack.mjs --deploy
 
 ## 同步口径(维护者)
 
-本仓库从上游客户端分析仓库同步功能时采用**白名单**:只同步下列三项,其它补丁一律不移植。
+本仓库从上游客户端分析仓库同步功能时采用**白名单**:只同步下列四项,其它补丁一律不移植。
 
 | 白名单项 | 文件 | 说明 |
 |---|---|---|
 | token 统计 | `inject/tok-badge.js` | 对话气泡旁的 token 用量/耗时统计 |
 | 屏蔽 ESC | `inject/block-esc.js` | 条件式 ESC 拦截 |
 | magpie 额度显示 | `inject/quota-balance.js` + `inject/quota-main.cjs` | 上下文容量浮层内的第三方剩余额度段 |
+| 请求分组标记 | `inject/request-marker.js` | 步骤流按模型请求分组标记(标签 + 灰色竖条) |
 
 白名单外的补丁**不得进入本仓库**。新增白名单项须明确批准,并同时更新本节、`inject/pack.mjs` 的 `SCRIPTS` 与对应 facts 卡。
 
@@ -106,4 +111,4 @@ node inject/pack.mjs --deploy
 
 Windows,3.14.1 / 3.14.3 / 3.14.4 / 3.15.1 / 3.15.3 / 3.16.1 / 3.16.3 / 3.17.1 / 3.17.2——锚点稳定性先例与升级漂移记录见 `guide/common/method.md`。
 
-quota-balance 在 3.17.1 / 3.17.2 实测(依赖该版本的浮层结构与 magpie 本地接口);tok-badge / block-esc 的版本覆盖见上。
+quota-balance 在 3.17.1 / 3.17.2 实测(依赖该版本的浮层结构与 magpie 本地接口);request-marker 在 3.17.2 实机上线,其锚点卡在 3.17.1 与 3.17.2 解包产物均逐条命中;tok-badge / block-esc 的版本覆盖见上。
