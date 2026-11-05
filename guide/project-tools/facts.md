@@ -1,6 +1,6 @@
 # project-tools 事实卡
 
-功能:增强左侧侧栏的**「项目」分区**——分区标题 hover 操作区加「名称排序 / 最近更新时间排序 / 项目名筛选」,每个项目行的动作组加「移到最上方」,项目下有任务运行中时项目名称右侧显示与任务行同款的加载图标。
+功能:增强左侧侧栏的**「项目」分区**——分区标题 hover 操作区加「名称排序 / 最近更新时间排序 / 项目名筛选」,每个项目行的动作组加「移到最上方」,项目下有任务运行中时项目名称右侧显示与任务行同款的加载图标;会话空闲但后台任务仍在跑的任务行,行首状态格显示静态终端图标。
 
 脚本:`inject/project-tools.js`(单 IIFE,头注释即设计文档)。
 
@@ -12,7 +12,8 @@
 # 除最后一条外均在 renderer/assets/styles-*.js
 for s in data-project-id data-project-name data-project-host project-section \
          virtual-project-toggle virtual-project-actions data-purpose-section-list \
-         __zcodeSessionActivity zcode-project-sidebar-preferences; do
+         __zcodeSessionActivity zcode-project-sidebar-preferences \
+         data-task-item-key hasBackgroundWork; do
   printf '%s ' "$s"; grep -oF -- "$s" unpack/app_extract/out/renderer/assets/styles-*.js | wc -l
 done
 grep -oF '__reactFiber$' unpack/app_extract/out/renderer/assets/pptxElementReference-*.js | wc -l
@@ -30,10 +31,12 @@ grep -oF '__reactFiber$' unpack/app_extract/out/renderer/assets/pptxElementRefer
 | styles-*.js | `virtual-project-actions` | 项目行动作组 testid(「移到最上方」注入点) |
 | styles-*.js | `data-purpose-section-list` | 分区列表容器属性 |
 | styles-*.js | `__zcodeSessionActivity` | 任务活动对象挂载键(`phase` = running/prewarming,运行态判据) |
+| styles-*.js | `data-task-item-key` | 任务行 `li` 键属性(后台标记行定位;分组视图 div 行不消费) |
+| styles-*.js | `hasBackgroundWork` | `__zcodeSessionActivity` 的后台工作字段(后台标记判据;原生指示器不消费,仅活跃排序消费) |
 | styles-*.js | `zcode-project-sidebar-preferences` | 应用自身的项目顺序/视图持久化 localStorage 键(「移到最上方」写它) |
 | pptxElementReference-*.js | `__reactFiber$` | React fiber 键前缀(读 `memoizedProps.project/tasks`) |
 
-锚点在上游仓库 3.17.2 解包产物逐条命中;本仓库现存的 3.17.1 解包产物同样逐条命中(计数 9 / 4 / 2 / 1 / 2 / 1 / 1 / 2 / 2,`__reactFiber$` 1)。
+锚点在上游仓库 3.17.2 解包产物逐条命中;本仓库现存的 3.17.1 解包产物同样逐条命中(计数 9 / 4 / 2 / 1 / 2 / 1 / 1 / 2 / 2,`__reactFiber$` 1;后台标记两项 `data-task-item-key` / `hasBackgroundWork` 各 3,2026-11-05 补验)。
 
 ## 机制最小结论
 
@@ -44,8 +47,9 @@ grep -oF '__reactFiber$' unpack/app_extract/out/renderer/assets/pptxElementRefer
 5. **运行中图标**:从项目行 `section` 的 React fiber 向上找 `memoizedProps.project/tasks`,按 `tasks[].__zcodeSessionActivity.phase`(`running`/`prewarming`,兜底 `status==='running'`)判定;命中给 section 打 `data-zqp-running=1`,spinner 挂到项目名称容器末尾(图标盒的后兄弟 span;水平间距沿用原生 `gap-2`,基线容器内 `align-self:center` 垂直居中),原图标不动。**与任务行「正在工作」标记同款**:lucide `loader`(8 段,`stroke-width 1.5`)+ Tailwind `animate-spin`。折叠的项目也能判(不依赖任务行 DOM)
 6. **列表改 flex 前过 `canFlex`**:只允许容器内「全是项目行 + 不影响布局的占位」——dnd-kit 的无障碍活区(`display:none` 或 rect ≤ 1px)忽略,出现其它可见兄弟节点就放弃排序,免得打乱布局
 7. **跟随重渲染**:标题操作区、筛选行、行内按钮与图标位都是 React 管理的节点,注入必须幂等;body 上 `MutationObserver`(childList + subtree,rAF 去抖)+ 1.5s 周期扫描补回,`stop()` 只清本脚本自己的 `data-zqp-*`
+8. **后台任务标记(2026-11-05)**:任务行 `li[data-task-item-key]` 沿 fiber 取 `props.task.__zcodeSessionActivity`,`hasBackgroundWork===true` 且 phase 非 running/prewarming(会话空闲但后台 Bash/agent 未结束)时行打 `data-zqp-bg=1`,行首状态格(原生指示器位,空闲时空)补**静态**终端图标(lucide `terminal`,size-3.5 不旋转——与前台运行的旋转 loader 图形/尺寸双区分),hover 提示「后台任务运行中」。前台运行中不叠加(原生 spinner 已表达),error 圆点可并存,置顶是原生活跃排序自带;分组视图 div 行无独立状态格暂不标记;activity 变化不必然伴随 DOM 变化,1.5s 轮询是主刷新通道,observer 只管行重建补图标
 
-DOM 锚点(排障/改版用):`data-zqp-actions`(标题操作区)、`data-zqp-action`(name/updated/filter/clear-filter/top)、`data-zqp-state`(排序按钮 off/1/-1)、`data-zqp-active`(激活态)、`data-zqp-filter-row` / `data-zqp-filter-input` / `data-zqp-open` / `data-zqp-empty`(筛选行)、`data-zqp-list`(排序视图容器)、`data-zqp-hidden`(被筛掉的项目行)、`data-zqp-running` / `data-zqp-spinner`(运行中图标);样式表 id `zcode-project-tools-style`;排序视图持久化键 `zcode:project-tools:sort`。
+DOM 锚点(排障/改版用):`data-zqp-actions`(标题操作区)、`data-zqp-action`(name/updated/filter/clear-filter/top)、`data-zqp-state`(排序按钮 off/1/-1)、`data-zqp-active`(激活态)、`data-zqp-filter-row` / `data-zqp-filter-input` / `data-zqp-open` / `data-zqp-empty`(筛选行)、`data-zqp-list`(排序视图容器)、`data-zqp-hidden`(被筛掉的项目行)、`data-zqp-running` / `data-zqp-spinner`(运行中图标)、`data-zqp-bg` / `data-zqp-bgmark`(后台任务标记);样式表 id `zcode-project-tools-style`;排序视图持久化键 `zcode:project-tools:sort`。
 
 ## 验证清单(换装重启后)
 
@@ -55,9 +59,10 @@ DOM 锚点(排障/改版用):`data-zqp-actions`(标题操作区)、`data-zqp-act
 4. 点筛选按钮:输入框展开并自动 focus;输入关键字只留命中的项目,无匹配显示「无匹配项目」;点清除按钮**清空并收起**
 5. 项目行「…」菜单左侧出现「移到最上方」;点击后 `zcode-project-sidebar-preferences.order` 里该项目在同组首位,DOM 首行同步;排序视图下点击会回到手动顺序
 6. 项目下有任务运行时,项目名称右侧出现 spinner(8 段线 + 旋转动画),与任务行「正在工作」图标逐字节同款(CDP 比 `svg` 与 `getComputedStyle(...).animation`;另确认名称→spinner 水平间距 = 原生 gap-2 8px、spinner 垂直居中)
-7. 等待 ≥5s / 触发重渲染后按钮与 spinner 不丢(observer + 1.5s 扫描生效)
+7. 会话空闲但后台任务在跑的任务行:行首状态格出现静态终端图标(不旋转),hover 提示「后台任务运行中」;`window.__zcodeProjectTools.apply()` 后目标 `li` 带 `data-zqp-bg="1"`;前台运行中行不叠加
+8. 等待 ≥5s / 触发重渲染后按钮与 spinner 不丢(observer + 1.5s 扫描生效)
 
-上游仓库已在 3.17.2 实机经 CDP 验证:排序三态/两态与图标、筛选聚焦与清除收起、移顶后 prefs order 与 DOM 首行、运行中 spinner 的 svg/animation 与任务行一致、重渲染 5s 后不丢。名称右侧挂载(2026-11-04 改)同页复验:spinner 落名称容器末尾、名称→spinner 间距 = 原生 gap-2 8px、垂直居中偏差 0、animate-spin 计算值 `spin 1s`(注入后 0.3s/1.9s 两次复测);视觉呈现用户验收中。注意:页面 reload 后应用 `<link>` 样式表加载完成前,computed `animationName` 会短暂全页为 `none`(内联注入样式不受影响)——CDP 断言动画须避开该窗口。
+上游仓库已在 3.17.2 实机经 CDP 验证:排序三态/两态与图标、筛选聚焦与清除收起、移顶后 prefs order 与 DOM 首行、运行中 spinner 的 svg/animation 与任务行一致、重渲染 5s 后不丢。名称右侧挂载(2026-11-04 改)同页复验:spinner 落名称容器末尾、名称→spinner 间距 = 原生 gap-2 8px、垂直居中偏差 0、animate-spin 计算值 `spin 1s`(注入后 0.3s/1.9s 两次复测);视觉呈现用户验收中。注意:页面 reload 后应用 `<link>` 样式表加载完成前,computed `animationName` 会短暂全页为 `none`(内联注入样式不受影响)——CDP 断言动画须避开该窗口。后台任务标记(2026-11-05)上游已随包部署、锚点逐条 grep 实证,图标呈现待实机按清单复验。
 
 ## 排障与开关
 
@@ -65,6 +70,7 @@ DOM 锚点(排障/改版用):`data-zqp-actions`(标题操作区)、`data-zqp-act
 - 排序不生效:控制台跑 `window.__zcodeProjectTools.apply()`,检查三角容器是否命中 `canFlex` 条件(出现可见兄弟节点会主动放弃排序)、`[data-zqp-list]` 是否存在
 - 移到最上方无效:确认 `localStorage['zcode-project-sidebar-preferences']` 里 `order` 已更新、且应用监听了 `storage` 事件(应用自身拖拽同一路径);组内只有一个项目时脚本直接返回
 - spinner 不出现/不消失:检查 `data-zqp-running` 是否随任务状态变化;运行态来自 fiber 的 `__zcodeSessionActivity`,字段漂移按上表抽查
+- 后台标记不出现:先确认该行会话**空闲**(前台运行中原生 spinner 已表达,本标记只在空闲时显示;行被原生活跃排序置顶即 `hasBackgroundWork` 在场的旁证);控制台 `window.__zcodeProjectTools.apply()` 后查目标行 `data-zqp-bg` 与行首 `[data-zqp-bgmark]`;分组视图 div 行不标记属预期
 - 关闭:`localStorage.setItem('zcode:project-tools:enabled','0')` 后刷新(默认开启);当前页立即撤销用 `window.__zcodeProjectTools.stop()`
 
 ## 已知局限
@@ -73,3 +79,4 @@ DOM 锚点(排障/改版用):`data-zqp-actions`(标题操作区)、`data-zqp-act
 - 排序只在 `canFlex` 通过的列表容器生效;未来若列表容器新增可见兄弟节点(如「显示更多」),排序会主动放弃
 - 「移到最上方」只作用于同组(同父容器)且不改变 pinned;置顶仍走应用原生 pinned
 - 未验证边角:pinned 项目运行中时,项目行 hover 可能同时出现原生 pin 图标与本脚本 spinner
+- 后台任务标记只覆盖列表视图 li 行;分组视图 div 行无独立状态格,不标记

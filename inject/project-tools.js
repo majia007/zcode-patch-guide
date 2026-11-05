@@ -1,6 +1,8 @@
 // 缺口: 左侧任务列表的「项目」分区只能按手动拖拽顺序排列, 没有名称/更新时间排序,
 // 也没有项目名筛选; 项目行图标无法体现"该项目下有任务正在运行"; 项目行操作组没有
-// "移到最上方"的快捷入口(置顶会移到独立列表, 与拖拽到顶部不是一回事)。
+// "移到最上方"的快捷入口(置顶会移到独立列表, 与拖拽到顶部不是一回事); 任务行状态
+// 指示器只认 phase, 不消费 __zcodeSessionActivity.hasBackgroundWork —— 会话空闲但
+// 后台任务仍在跑的行虽被原生活跃排序置顶, 外观上却无任何标记。
 //
 // 本脚本随 index.html 注入渲染进程(早于应用代码执行), 全部基于 DOM + React fiber:
 //   1. 分区标题右侧 hover 操作区加三个按钮: 名称排序 / 最近更新时间排序 / 筛选项目。
@@ -11,12 +13,19 @@
 //   3. 项目下存在运行中任务时, 项目名称右侧追加旋转加载图标(挂名称容器末尾, 间距沿用原生 gap-2)。
 //     运行态从 React fiber 的 memoizedProps.tasks[].__zcodeSessionActivity.phase 读取
 //     折叠项目也拿得到, 不依赖任务行是否渲染)。
+//   4. 任务行(li[data-task-item-key])沿 fiber 读 props.task 的 __zcodeSessionActivity:
+//      hasBackgroundWork===true 且 phase 非 running/prewarming(会话空闲但后台任务在跑)
+//      时行打 data-zqp-bg, 行首状态格(原生指示器位, 空闲时为空位)补静态终端图标 ——
+//      与前台运行的旋转 loader 图形/尺寸双区分; 前台运行中不叠加(原生 spinner 已表达),
+//      error 圆点可并存。分组视图行(div)无独立状态格, 暂不标记。activity 变化不必然
+//      伴随 DOM 变化, 轮询是主刷新通道, observer 只管行重建补图标。
 //
 // 开关: localStorage.setItem('zcode:project-tools:enabled','0') 后刷新(默认开启)。
 // 运行时停用: window.__zcodeProjectTools.stop()。
 // 依赖: section[data-project-id] / data-project-host / data-project-name /
 //       data-testid=project-section / virtual-project-toggle(-all) / virtual-project-actions /
-//       __zcodeSessionActivity / zcode-project-sidebar-preferences / React fiber。
+//       __zcodeSessionActivity(含 hasBackgroundWork 字段) / li[data-task-item-key] /
+//       zcode-project-sidebar-preferences / React fiber。
 //       升级后按 maps/anchors.md 抽查。
 (() => {
   const W = window;
@@ -87,6 +96,46 @@
     };
   };
 
+  // 任务行(li)组件链上有不止一层组件 props 带 task, 取第一个命中即可:
+  // activity 挂在 task 对象上, 与命中层级无关
+  const taskOf = (li) => {
+    let f = fiberOf(li);
+    for (let i = 0; i < 16 && f; i++, f = f.return) {
+      const p = f.memoizedProps;
+      if (p && p.task && typeof p.task === 'object') return p.task;
+    }
+    return null;
+  };
+
+  // 会话空闲 = phase 非 running/prewarming; 后台有活 = hasBackgroundWork===true
+  // (error 圆点与后台图标可并存, 各说各的事; 前台运行中原生 spinner 已表达, 不叠加)
+  const bgIdle = (task) => {
+    const act = task && task.__zcodeSessionActivity;
+    if (!act || act.hasBackgroundWork !== true) return false;
+    return act.phase !== 'running' && act.phase !== 'prewarming';
+  };
+
+  // 任务行后台标记: 行打 data-zqp-bg, 空闲+后台有活时行首状态格(空闲时为空位)补图标
+  const applyTaskMarks = () => {
+    for (const li of document.querySelectorAll('[data-task-item-key]')) {
+      if (li.tagName !== 'LI') continue; // 分组视图 div 行无独立状态格, 暂不标记
+      const bg = bgIdle(taskOf(li));
+      li.setAttribute('data-zqp-bg', bg ? '1' : '0');
+      if (!bg) continue;
+      const slot = li.firstElementChild; // 状态格 = 原生指示器与 pin 按钮所在(relative flex size-4)
+      if (!slot || slot.tagName !== 'DIV') continue;
+      if (!slot.querySelector('[data-zqp-bgmark]')) {
+        const mark = document.createElement('span');
+        mark.setAttribute('data-zqp-bgmark', '1');
+        mark.className = 'zqp-bgmark';
+        mark.setAttribute('title', '后台任务运行中');
+        mark.setAttribute('aria-label', '后台任务运行中');
+        mark.innerHTML = ICON_TERMINAL;
+        slot.appendChild(mark);
+      }
+    }
+  };
+
   // 正序/倒序用不同图标区分; off=未启用(手动顺序)时用中性图标
   const ICON_NAME_OFF =
     '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5" aria-hidden="true"><path d="m21 16-4 4-4-4"></path><path d="M17 20V4"></path><path d="m3 8 4-4 4 4"></path><path d="M7 4v16"></path></svg>';
@@ -116,6 +165,10 @@
   // 与任务行的运行标记同款: lucide loader(8 段放射线) + animate-spin(1s linear)
   const ICON_SPINNER =
     '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-loader size-4 text-foreground-subtle" aria-hidden="true"><path d="M12 2v4"></path><path d="m16.2 7.8 2.9-2.9"></path><path d="M18 12h4"></path><path d="m16.2 16.2 2.9 2.9"></path><path d="M12 18v4"></path><path d="m4.9 19.1 2.9-2.9"></path><path d="M2 12h4"></path><path d="m4.9 4.9 2.9 2.9"></path></svg>';
+
+  // 后台任务标记: 静态终端图标(size-3.5), 与任务行原生旋转 loader(size-4)图形/尺寸双区分
+  const ICON_TERMINAL =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5" aria-hidden="true"><path d="m4 17 6-6-6-6"></path><path d="M12 19h8"></path></svg>';
 
   const ICON_CLEAR =
     '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>';
@@ -300,6 +353,7 @@
     });
 
     applyChrome();
+    applyTaskMarks();
   };
 
   const applyChrome = () => {
@@ -458,6 +512,9 @@
       /* 运行态: spinner 挂项目名称容器末尾(原生 gap-2 控距), 基线容器内垂直居中 */
       .zqp-spinner { display: none; align-items: center; justify-content: center; align-self: center; }
       [data-zqp-running="1"] .zqp-spinner { display: inline-flex; }
+      /* 后台任务标记: 行首状态格空闲位, 静态终端图标 */
+      .zqp-bgmark { display: none; align-items: center; justify-content: center; color: var(--color-foreground-subtle); }
+      [data-zqp-bg="1"] .zqp-bgmark { display: inline-flex; }
     `;
     document.head.appendChild(style);
   };
@@ -494,6 +551,8 @@
     document.querySelectorAll('[data-zqp-action]').forEach((el) => el.remove());
     document.querySelectorAll('[data-zqp-filter-row]').forEach((el) => el.remove());
     document.querySelectorAll('[data-zqp-spinner]').forEach((el) => el.remove());
+    document.querySelectorAll('[data-zqp-bgmark]').forEach((el) => el.remove());
+    document.querySelectorAll('[data-zqp-bg]').forEach((el) => el.removeAttribute('data-zqp-bg'));
     const sections = document.querySelectorAll('[data-project-id]');
     for (const sec of sections) {
       sec.removeAttribute('data-zqp-running');

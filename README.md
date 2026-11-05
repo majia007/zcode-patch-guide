@@ -34,7 +34,7 @@ node inject/pack.mjs --deploy
 - **block-esc** — 防误触的 ESC 条件拦截
 - **quota-balance** — 上下文用量浮层里的第三方剩余额度段(需要本机运行 magpie 聚合器,见 [guide/quota-balance/facts.md](guide/quota-balance/facts.md))
 - **request-marker** — 步骤流按模型请求分组标记(`#N` 标签 + 灰色竖条,见 [guide/request-marker/facts.md](guide/request-marker/facts.md))
-- **project-tools** — 左侧「项目」分区的名称/更新时间排序、项目名筛选、行内「移到最上方」与运行中任务图标(见 [guide/project-tools/facts.md](guide/project-tools/facts.md))
+- **project-tools** — 左侧「项目」分区的名称/更新时间排序、项目名筛选、行内「移到最上方」、运行中任务图标与空闲后台任务标记(见 [guide/project-tools/facts.md](guide/project-tools/facts.md))
 
 全部修改经解包→注入→打包→换装落地,自动保留回滚包。
 
@@ -91,7 +91,7 @@ node inject/pack.mjs --deploy
     ├── quota-balance.js    # 渲染端额度段脚本(挂到上下文容量浮层)
     ├── quota-main.cjs      # 主进程额度轮询器(拷到 resources 根目录,入口尾部动态 import)
     ├── request-marker.js   # 请求分组标记脚本(React fiber 读行数据,打 data-zrq-*)
-    ├── project-tools.js    # 项目分区增强脚本(排序/筛选/移到最上方/运行中图标,打 data-zqp-*)
+    ├── project-tools.js    # 项目分区增强脚本(排序/筛选/移到最上方/运行中图标/后台任务标记,打 data-zqp-*)
     ├── pack.mjs            # 注入打包器:注入 index.html → 挂主进程模块 → 三重校验 → asar 打包;--deploy 挂换装监视器
     └── apply-update.mjs    # 换装监视器:等退出→防降级校验→换装→按原命令行重启
 ```
@@ -108,7 +108,7 @@ node inject/pack.mjs --deploy
 | 屏蔽 ESC | `inject/block-esc.js` | 条件式 ESC 拦截 |
 | magpie 额度显示 | `inject/quota-balance.js` + `inject/quota-main.cjs` | 上下文容量浮层内的第三方剩余额度段 |
 | 请求分组标记 | `inject/request-marker.js` | 步骤流按模型请求分组标记(标签 + 灰色竖条) |
-| 项目分区增强 | `inject/project-tools.js` | 左侧项目分区的名称/更新时间排序、项目名筛选、移到最上方、运行中图标 |
+| 项目分区增强 | `inject/project-tools.js` | 左侧项目分区的名称/更新时间排序、项目名筛选、移到最上方、运行中图标、任务行后台标记 |
 
 白名单外的补丁**不得进入本仓库**。新增白名单项须明确批准,并同时更新本节、`inject/pack.mjs` 的 `SCRIPTS` 与对应 facts 卡。
 

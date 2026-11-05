@@ -58,7 +58,7 @@ ZCode 本来就没在运行时,监视器会立刻换装并跳过重启(`no relau
 
 ## 5. 验证
 
-见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed;quota-balance 需本机 magpie 且选用第三方模型,打开上下文用量浮层看 `.zcode-quota-section`;request-marker 打开含工具调用的会话看行左侧 `#N` 标签与灰色竖条;project-tools 看侧栏「项目」分区标题 hover 的三个按钮、项目行「移到最上方」与运行中项目的 spinner)。
+见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed;quota-balance 需本机 magpie 且选用第三方模型,打开上下文用量浮层看 `.zcode-quota-section`;request-marker 打开含工具调用的会话看行左侧 `#N` 标签与灰色竖条;project-tools 看侧栏「项目」分区标题 hover 的三个按钮、项目行「移到最上方」、运行中项目的 spinner 与空闲任务行的后台终端图标)。
 
 ## 6. 回滚
 
