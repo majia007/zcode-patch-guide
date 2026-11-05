@@ -8,7 +8,7 @@
 //   2. 项目行右侧动作组("..." 菜单旁)加"移到最上方": 复用应用自身的顺序持久化
 //      (localStorage zcode-project-sidebar-preferences 的 order 数组 + 合成 storage 事件),
 //      等价于手动拖拽到顶部, 不改 pinned。
-//   3. 项目下存在运行中任务时, 项目行左侧文件夹图标换成旋转加载图标。
+//   3. 项目下存在运行中任务时, 项目名称右侧追加旋转加载图标(挂名称容器末尾, 间距沿用原生 gap-2)。
 //     运行态从 React fiber 的 memoizedProps.tasks[].__zcodeSessionActivity.phase 读取
 //     折叠项目也拿得到, 不依赖任务行是否渲染)。
 //
@@ -204,7 +204,7 @@
     if (input && input.value !== filter.q) input.value = filter.q;
   };
 
-  // 项目行: 右侧动作组加"移到最上方", 左侧图标位按运行态换 spinner
+  // 项目行: 右侧动作组加"移到最上方", 项目名称右侧追加运行态 spinner(原图标不动)
   const syncRowChrome = (sec, meta) => {
     const actions = sec.querySelector(':scope > [data-testid="virtual-project-row"] [data-testid="virtual-project-actions"]');
     if (actions && !actions.querySelector('[data-zqp-action="top"]')) {
@@ -212,16 +212,17 @@
       actions.insertBefore(makeButton(cls, 'top', '移到最上方', ICON_TOP), actions.firstChild);
     }
 
-    const iconBox = sec.querySelector(':scope > [data-testid="virtual-project-row"] button[data-testid="virtual-project-toggle"] > span[aria-hidden="true"]');
-    if (iconBox) {
-      iconBox.setAttribute('data-zqp-icon', '1');
-      let spin = iconBox.querySelector('[data-zqp-spinner]');
+    // 名称容器 = 折叠按钮内图标盒(aria-hidden span)的下一个兄弟; spinner 挂其末尾,
+    // 水平间距沿用容器原生 gap-2, 基线容器内用 align-self:center 垂直居中
+    const nameBox = sec.querySelector(':scope > [data-testid="virtual-project-row"] button[data-testid="virtual-project-toggle"] > span[aria-hidden="true"] + span');
+    if (nameBox) {
+      let spin = nameBox.querySelector('[data-zqp-spinner]');
       if (!spin) {
         spin = document.createElement('span');
         spin.setAttribute('data-zqp-spinner', '1');
         spin.className = 'zqp-spinner animate-spin';
         spin.innerHTML = ICON_SPINNER;
-        iconBox.appendChild(spin);
+        nameBox.appendChild(spin);
       }
     }
     sec.setAttribute('data-zqp-running', meta.running ? '1' : '0');
@@ -454,9 +455,9 @@
         content: "无匹配项目"; display: block; padding: 4px 8px 0;
         font-size: var(--text-ui-sm); color: var(--color-foreground-subtle);
       }
-      [data-zqp-running="1"] [data-zqp-icon] > span.inline-flex { display: none !important; }
-      [data-zqp-icon] .zqp-spinner { display: none; align-items: center; justify-content: center; }
-      [data-zqp-running="1"] [data-zqp-icon] .zqp-spinner { display: inline-flex; }
+      /* 运行态: spinner 挂项目名称容器末尾(原生 gap-2 控距), 基线容器内垂直居中 */
+      .zqp-spinner { display: none; align-items: center; justify-content: center; align-self: center; }
+      [data-zqp-running="1"] .zqp-spinner { display: inline-flex; }
     `;
     document.head.appendChild(style);
   };
@@ -493,7 +494,6 @@
     document.querySelectorAll('[data-zqp-action]').forEach((el) => el.remove());
     document.querySelectorAll('[data-zqp-filter-row]').forEach((el) => el.remove());
     document.querySelectorAll('[data-zqp-spinner]').forEach((el) => el.remove());
-    document.querySelectorAll('[data-zqp-icon]').forEach((el) => el.removeAttribute('data-zqp-icon'));
     const sections = document.querySelectorAll('[data-project-id]');
     for (const sec of sections) {
       sec.removeAttribute('data-zqp-running');
