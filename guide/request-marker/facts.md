@@ -39,7 +39,7 @@ grep -Fc '__reactFiber$' unpack/app_extract/out/renderer/assets/pptxElementRefer
 
 1. **数据源是 React fiber,不走帧协议**:从 `[data-row-id]` 行的 `__reactFiber$` 向上最多 24 层读 `memoizedProps` 的 `rows` / `row` / `item.rows`;只认行对象 `assistantResponseId` 作分组键,不按 DOM 相邻关系分组
 2. **请求编号**:同一时刻挂载的 turn 内按首行 id 升序编号 `#1..#N`;标签 = `#N · 工具名×次数`(工具计数超 40 字符截断)
-3. **跨请求合并行**:一行/一个折叠组里的工具来自多个请求时,标签显示 `#a → #b/c` 并换行列出工具(`white-space: pre-line`,属性值含真实换行)
+3. **跨请求合并行**:一行/一个折叠组里的工具来自多个请求时,标签显示 `#a → #b`(只标区间首尾,中间序号不展示)并换行列出工具(`white-space: pre-line`,属性值含真实换行)
 4. **折叠态**:折叠内容区内的行正常画条;内容区外、位于折叠态 turn 的正文行只留 `#N`(不画竖条/底色);「已工作」标题按折叠内容里的请求区间打 `#min → #max`(区间同号时只显示 `#N`),无组时清残留(防展开/滚动后沿用旧区间)
 5. **裁剪解除只放开最近一个 `overflow:hidden` 祖先**,且每轮 apply 先清 `data-zrq-clip` 再重算——承载行随虚拟滚动/展开更换,旧容器滞留会永久放开 overflow 导致标签移位
 6. **重打标**:body 上 `MutationObserver`(childList + subtree,rAF 去抖);属性变更不触发,只观察 childList

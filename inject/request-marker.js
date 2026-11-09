@@ -150,7 +150,9 @@
       if (tools.length > 40) tools = `${tools.slice(0, 39)}…`;
       const extras = m.extras.map((r) => gmap.get(r)).filter(Boolean);
       if (extras.length) {
-        const span = `#${g.n} → #${extras.map((e) => e.n).join('/')}`;
+        // 区间只标首尾: 同一行合并多个请求时只显示 #首 → #尾, 中间序号不出现在标签里
+        const last = extras.reduce((a, e) => Math.max(a, e.n), g.n);
+        const span = `#${g.n} → #${last}`;
         return tools ? `${span}\n${tools}` : span;
       }
       return `#${g.n}${tools ? ` · ${tools}` : ''}`;
@@ -264,7 +266,7 @@
         top: -8px;
         bottom: -8px;
         width: 1px;
-        background: #d8dce2;
+        background: #e0e0e0;
       }
       [data-zrq-first="1"]::before { top: 0; }
       [data-zrq-last="1"]::before { bottom: 0; }
