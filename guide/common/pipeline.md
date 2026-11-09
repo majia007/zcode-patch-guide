@@ -18,7 +18,7 @@ npx --yes @electron/asar extract "<resources>/app.asar" unpack/app_extract
 
 ## 2. 锚点抽查(注入依赖体检)
 
-对解包产物 grep 各功能的**锚点卡**全表([../tok-badge/facts.md](../tok-badge/facts.md)、[../block-esc/facts.md](../block-esc/facts.md)、[../quota-balance/facts.md](../quota-balance/facts.md)、[../request-marker/facts.md](../request-marker/facts.md)、[../project-tools/facts.md](../project-tools/facts.md)):
+对解包产物 grep 所选功能的**锚点卡**全表(只装部分功能时只查所选;五张卡:[../tok-badge/facts.md](../tok-badge/facts.md)、[../block-esc/facts.md](../block-esc/facts.md)、[../quota-balance/facts.md](../quota-balance/facts.md)、[../request-marker/facts.md](../request-marker/facts.md)、[../project-tools/facts.md](../project-tools/facts.md)):
 
 ```bash
 grep -c 'data-zcode-chat-loading-animate' unpack/app_extract/out/renderer/assets/styles-*.js
@@ -31,10 +31,13 @@ grep -c 'data-zcode-chat-loading-animate' unpack/app_extract/out/renderer/assets
 ## 3. 注入 + 打包
 
 ```bash
-node inject/pack.mjs
+node inject/pack.mjs                                  # 全量(五个功能都注入)
+node inject/pack.mjs --scripts tok-badge,block-esc    # 只重注入所选(未选模块既有块保留)
 ```
 
-做的事:把 `inject/` 五个脚本注入 `unpack/app_extract/out/renderer/index.html` 的 head 闭合标签前(每脚本独立标记块包裹,幂等可重跑);另把 `quota-main.cjs` 拷到 `<resources>/zcode-quota-main.cjs`(不进 asar),并在 `unpack/app_extract/out/main/index.js` 尾部追加幂等标记块 `import("file://…/zcode-quota-main.cjs")`(主进程额度轮询器)→ 三重校验(round-trip 逐字节比对、标签计数、node --check)→ asar 打包到 `<resources>/app.asar.new`(约 1 分钟)。**不碰运行中的 app.asar**;任一校验失败立即中止、退出码非 0。
+模块名:`tok-badge` / `block-esc` / `quota-balance` / `request-marker` / `project-tools`(逗号分隔)。选集只影响 renderer 注入;主进程额度补丁(`zcode-quota` 标记块与 `zcode-quota-main.cjs`)不在选集内,照常应用。用户只装部分功能时,按所选列表传 `--scripts`。
+
+做的事:把 `inject/` 脚本(全量或选集)注入 `unpack/app_extract/out/renderer/index.html` 的 head 闭合标签前(每脚本独立标记块包裹,幂等可重跑);另把 `quota-main.cjs` 拷到 `<resources>/zcode-quota-main.cjs`(不进 asar),并在 `unpack/app_extract/out/main/index.js` 尾部追加幂等标记块 `import("file://…/zcode-quota-main.cjs")`(主进程额度轮询器)→ 三重校验(round-trip 逐字节比对、标签计数、node --check)→ asar 打包到 `<resources>/app.asar.new`(约 1 分钟)。**不碰运行中的 app.asar**;任一校验失败立即中止、退出码非 0。
 
 产物 SHA 复现规则(实测):
 - 同一 `unpack/` 状态连跑,产物**逐字节一致**(可作部署自检:重跑一次比 SHA)

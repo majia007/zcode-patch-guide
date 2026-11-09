@@ -4,8 +4,9 @@
 // → 三重校验 → asar 打包到 resources/app.asar.new
 // 另:quota-main.cjs 拷到 <resources>/zcode-quota-main.cjs,并在 out/main/index.js 尾部
 // 追加幂等标记块动态 import(主进程额度轮询器;换装不重打包也能更新)
-// 用法: node inject/pack.mjs [--deploy]
+// 用法: node inject/pack.mjs [--deploy] [--scripts <name[,name...]>]
 //   默认: 注入 + 打包 app.asar.new(不碰运行中的 app.asar)
+//   --scripts: 只重注入指定模块(逗号分隔); 未选模块的既有注入块原样保留(增量部署/加装)
 //   --deploy: 另把 apply-update.mjs 与打包时 app.asar 指纹(app.asar.new.sha256)
 //             拷入 resources 目录并后台启动 wait 模式(客户端退出后自动换入,并按
 //             换装前抓取的主进程命令行自动重启客户端;换装前复验 app.asar 仍是
@@ -32,6 +33,7 @@ const SCRIPTS = [
   ['request-marker', join(REPO, 'inject', 'request-marker.js')],
   ['project-tools', join(REPO, 'inject', 'project-tools.js')],
 ]
+const SCRIPT_NAMES = SCRIPTS.map(([name]) => name)
 
 const marker = (name) => ['<!-- zcode-' + name + ':begin -->', '<!-- zcode-' + name + ':end -->']
 const S_OPEN = '<script>'
@@ -46,6 +48,22 @@ const readText = (p) => readFileSync(p, 'utf8').replace(/\r\n|\r/g, '\n')
 const sha256File = (p) => createHash('sha256').update(readFileSync(p)).digest('hex').toUpperCase()
 
 const deploy = process.argv.includes('--deploy')
+// --scripts 选集: 未选集模块的旧注入块不剥离(增量重部署), 默认全量
+const scriptsArg = (() => {
+  const i = process.argv.indexOf('--scripts')
+  if (i < 0) return undefined
+  const v = process.argv[i + 1]
+  return v && !v.startsWith('--') ? v : ''
+})()
+let selected = SCRIPTS
+if (scriptsArg !== undefined) {
+  if (!scriptsArg) fail('--scripts 需要模块名(逗号分隔): ' + SCRIPT_NAMES.join(', '))
+  const names = [...new Set(scriptsArg.split(',').map((s) => s.trim()).filter(Boolean))]
+  const unknown = names.filter((n) => !SCRIPT_NAMES.includes(n))
+  if (unknown.length) fail('未知模块: ' + unknown.join(', ') + ' (可选: ' + SCRIPT_NAMES.join(', ') + ')')
+  selected = names.map((n) => SCRIPTS.find(([k]) => k === n))
+  console.log('scripts: ' + names.join(', ') + ' (未选模块的既有注入块保持原样)')
+}
 // 资源目录: ZCODE_RES 优先,否则探测平台常见安装路径(win: LOCALAPPDATA\Programs 与
 // Program Files;mac: /Applications)。都没有则报错——自定义安装位置请设 ZCODE_RES。
 const WIN_RES_CANDIDATES = [
@@ -73,7 +91,7 @@ if (!existsSync(INDEX)) fail('unpack missing: ' + INDEX +
 let html = readText(INDEX)
 if (count(html, '</head>') !== 1) fail('index.html 结构异常')
 const blocks = []
-for (const [name, src] of SCRIPTS) {
+for (const [name, src] of selected) {
   const js = readText(src)
   const low = js.toLowerCase()
   for (const tok of FORBIDDEN) if (low.includes(tok)) fail(name + ' JS 内容含危险 token: ' + tok)
@@ -121,7 +139,7 @@ for (const [name, BEGIN, END, js] of blocks) {
   if (html.slice(a, b) !== '\n' + js + '\n') fail(name + ' 注入 round-trip 不一致')
 }
 // 校验 2:裸 script 开标签只多脚本数个(双标签残留史坑)
-if (count(html, S_OPEN) !== beforeScripts + SCRIPTS.length) fail('script 标签计数异常')
+if (count(html, S_OPEN) !== beforeScripts + blocks.length) fail('script 标签计数异常')
 // 校验 3:JS 语法(逐脚本)
 mkdirSync(join(REPO, 'tmp'), { recursive: true })
 for (const [name, , , js] of blocks) {

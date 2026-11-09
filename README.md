@@ -4,9 +4,9 @@
 
 不需要自己动手解包打补丁——把仓库地址丢给 agent,让它照本仓库的说明操作即可。典型指令(可直接复制):
 
-> 按 https://github.com/majia007/zcode-patch-guide 的说明,为 ZCode 加入 token 统计条(tok-badge)的功能
+> 按 https://github.com/majia007/zcode-patch-guide 的说明给 ZCode 装补丁:先读仓库说明,把可用功能介绍给我,问我要装哪些,我确认后再部署
 
-- 想要别的功能,把功能名换掉即可:`ESC 拦截(block-esc)`、`剩余额度(quota-balance)`、`请求分组标记(request-marker)`、`项目分区增强(project-tools)`,也可以都要
+- 已经知道自己要什么的话,直接在指令里点名功能即可:`token 统计条(tok-badge)`、`ESC 拦截(block-esc)`、`剩余额度(quota-balance)`、`请求分组标记(request-marker)`、`项目分区增强(project-tools)`,可以多选或都要
 - 前提:agent 需要在装了 ZCode 的这台机器上运行,能执行命令、读写文件
 
 不想经 agent 也可以手动执行,见[快速开始](#快速开始手动)。
@@ -19,6 +19,7 @@ git clone https://github.com/majia007/zcode-patch-guide && cd zcode-patch-guide
 npx --yes @electron/asar extract "<resources>/app.asar" unpack/app_extract
 # 2. 打包并挂换装监视器(安装目录不在常见路径时,前置 ZCODE_RES=<resources> 环境变量)
 node inject/pack.mjs --deploy
+#    只装部分功能: node inject/pack.mjs --scripts tok-badge,block-esc --deploy(未选模块的既有注入块保留)
 # 3. 完全退出 ZCode(右键托盘图标退出;点窗口 × 只是隐藏)→ 自动换装并自动重启
 ```
 
@@ -53,7 +54,12 @@ node inject/pack.mjs --deploy
 
 ## 给 agent:从这里开始
 
-典型指令长这样:**「按照 https://github.com/majia007/zcode-patch-guide 的说明,加一下 token 统计功能」**(即开头「使用说明」里的模板)。你的任务是把它变成一次完整部署:探测 → 解包 → 锚点抽查 → 注入打包 → 换装 → 验证。按下表路由读文件,然后照 `guide/common/pipeline.md` 执行:
+典型指令长这样:**「按照 https://github.com/majia007/zcode-patch-guide 的说明给 ZCode 装补丁:先介绍功能,问我装哪些」**(即开头「使用说明」里的模板)。你的任务分两步:
+
+1. **先问后装**:读完本 README,向用户逐个介绍功能(一句话效果 + 前提与开关;quota-balance 需本机 magpie 这类前提要点明),请用户选择要装哪些;用户已在指令里点名功能的,跳过询问直接进下一步
+2. **完整部署**:探测 → 解包 → 锚点抽查(只查所选功能的锚点卡)→ 注入打包(`node inject/pack.mjs --scripts <所选模块逗号列表> --deploy`,未选模块的既有注入块原样保留;装全量则省略 `--scripts`)→ 换装 → 验证
+
+按下表路由读文件,然后照 `guide/common/pipeline.md` 执行:
 
 | 场景 | 要读 |
 |------|------|
@@ -92,7 +98,7 @@ node inject/pack.mjs --deploy
     ├── quota-main.cjs      # 主进程额度轮询器(拷到 resources 根目录,入口尾部动态 import)
     ├── request-marker.js   # 请求分组标记脚本(React fiber 读行数据,打 data-zrq-*)
     ├── project-tools.js    # 项目分区增强脚本(排序/筛选/移到最上方/运行中图标/后台任务标记,打 data-zqp-*)
-    ├── pack.mjs            # 注入打包器:注入 index.html → 挂主进程模块 → 三重校验 → asar 打包;--deploy 挂换装监视器
+    ├── pack.mjs            # 注入打包器:注入 index.html → 挂主进程模块 → 三重校验 → asar 打包;--scripts 选集注入;--deploy 挂换装监视器
     └── apply-update.mjs    # 换装监视器:等退出→防降级校验→换装→按原命令行重启
 ```
 
