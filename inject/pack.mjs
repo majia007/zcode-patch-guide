@@ -4,9 +4,9 @@
 // → 三重校验 → asar 打包到 resources/app.asar.new
 // 另:quota-main.cjs 拷到 <resources>/zcode-quota-main.cjs,并在 out/main/index.js 尾部
 // 追加幂等标记块动态 import(主进程额度轮询器;换装不重打包也能更新)
-// 用法: node inject/pack.mjs [--deploy] [--scripts <name[,name...]>]
+// 用法: node inject/pack.mjs [--deploy] [--scripts <name[,name...]> | --scripts=<name[,name...]>]
 //   默认: 注入 + 打包 app.asar.new(不碰运行中的 app.asar)
-//   --scripts: 只重注入指定模块(逗号分隔); 未选模块的既有注入块原样保留(增量部署/加装)
+//   --scripts: 只重注入指定模块(逗号分隔, `--scripts a,b` 与 `--scripts=a,b` 均可); 未选模块的既有注入块原样保留(增量部署/加装)
 //   --deploy: 另把 apply-update.mjs 与打包时 app.asar 指纹(app.asar.new.sha256)
 //             拷入 resources 目录并后台启动 wait 模式(客户端退出后自动换入,并按
 //             换装前抓取的主进程命令行自动重启客户端;换装前复验 app.asar 仍是
@@ -48,21 +48,29 @@ const readText = (p) => readFileSync(p, 'utf8').replace(/\r\n|\r/g, '\n')
 const sha256File = (p) => createHash('sha256').update(readFileSync(p)).digest('hex').toUpperCase()
 
 const deploy = process.argv.includes('--deploy')
-// --scripts 选集: 未选集模块的旧注入块不剥离(增量重部署), 默认全量
+// --scripts 选集: 未选集模块的旧注入块不剥离(增量重部署), 默认全量。
+// 支持 `--scripts a,b` 与 `--scripts=a,b`; 重复声明/空清单/未知模块一律显式失败——
+// 用户点单必须等于实际注入集合, 不静默退化成全量或空选集。
 const scriptsArg = (() => {
-  const i = process.argv.indexOf('--scripts')
-  if (i < 0) return undefined
-  const v = process.argv[i + 1]
-  return v && !v.startsWith('--') ? v : ''
+  const forms = process.argv
+    .map((a, i) => (a === '--scripts' ? { v: process.argv[i + 1] }
+      : a.startsWith('--scripts=') ? { v: a.slice('--scripts='.length) } : null))
+    .filter(Boolean)
+  if (!forms.length) return undefined
+  if (forms.length > 1) fail('--scripts 只能声明一次(收到 ' + forms.length + ' 次)')
+  const v = forms[0].v
+  return v === undefined || v.startsWith('--') ? '' : v
 })()
 let selected = SCRIPTS
 if (scriptsArg !== undefined) {
-  if (!scriptsArg) fail('--scripts 需要模块名(逗号分隔): ' + SCRIPT_NAMES.join(', '))
+  if (!scriptsArg.trim()) fail('--scripts 需要模块名(逗号分隔): ' + SCRIPT_NAMES.join(', '))
   const names = [...new Set(scriptsArg.split(',').map((s) => s.trim()).filter(Boolean))]
+  if (!names.length) fail('--scripts 列表为空: ' + SCRIPT_NAMES.join(', '))
   const unknown = names.filter((n) => !SCRIPT_NAMES.includes(n))
   if (unknown.length) fail('未知模块: ' + unknown.join(', ') + ' (可选: ' + SCRIPT_NAMES.join(', ') + ')')
-  selected = names.map((n) => SCRIPTS.find(([k]) => k === n))
-  console.log('scripts: ' + names.join(', ') + ' (未选模块的既有注入块保持原样)')
+  // 按 SCRIPTS 表顺序落注入块: 同一集合不同书写顺序产物一致
+  selected = SCRIPTS.filter(([n]) => names.includes(n))
+  console.log('scripts: ' + selected.map(([n]) => n).join(', ') + ' (未选模块的既有注入块保持原样)')
 }
 // 资源目录: ZCODE_RES 优先,否则探测平台常见安装路径(win: LOCALAPPDATA\Programs 与
 // Program Files;mac: /Applications)。都没有则报错——自定义安装位置请设 ZCODE_RES。
@@ -115,20 +123,28 @@ writeFileSync(INDEX, html, 'utf8')
 // 主进程额度轮询器:运行文件拷到 resources 根目录,再在主进程入口尾部追加动态 import。
 // 幂等:先剥旧标记块再追加(换 ZCODE_RES/安装目录时 URL 自动更新);find 式补丁不适用,
 // 因为入口是单行 ESM,尾部无稳定特征串。
+// 归属 quota-balance 模块:本轮选集含 quota-balance 才挂载/更新;未选时保留既有状态
+// (增量部署不摘除已装功能,但"只装 tok-badge"也不会顺带装一个用不到的轮询器)。
 {
   if (!existsSync(MAIN_ENTRY)) fail('main entry 不存在: ' + MAIN_ENTRY + ' (unpack 不完整?重新解包)')
-  if (!existsSync(RES)) fail('resources 目录不存在: ' + RES)
-  const chk = spawnSync('node', ['--check', QUOTA_MAIN_SRC], { stdio: 'inherit' })
-  if (chk.status !== 0) fail('quota-main.cjs 语法检查失败')
-  writeFileSync(QUOTA_MAIN_DST, readText(QUOTA_MAIN_SRC), 'utf8')
-  const url = pathToFileURL(QUOTA_MAIN_DST).href
-  const block = '\n;/* zcode-quota:begin */import(' + JSON.stringify(url) +
-    ').catch((e)=>console.error("[zcode-quota] load failed",e));/* zcode-quota:end */\n'
-  const mainSrc = readText(MAIN_ENTRY)
-  const next = mainSrc.replace(QUOTA_BLOCK_RE, '') + block
-  if (next !== mainSrc) writeFileSync(MAIN_ENTRY, next, 'utf8')
-  if (count(readText(MAIN_ENTRY), '/* zcode-quota:begin */') !== 1) fail('main 注入标记异常(zcode-quota)')
-  console.log('[0/2] main patch OK zcode-quota')
+  const quotaMainSelected = selected.some(([n]) => n === 'quota-balance')
+  if (!quotaMainSelected) {
+    const has = readText(MAIN_ENTRY).includes('/* zcode-quota:begin */')
+    console.log('[0/2] main patch skip zcode-quota (未选集 quota-balance' + (has ? ', 保留既有挂载' : '') + ')')
+  } else {
+    if (!existsSync(RES)) fail('resources 目录不存在: ' + RES)
+    const chk = spawnSync('node', ['--check', QUOTA_MAIN_SRC], { stdio: 'inherit' })
+    if (chk.status !== 0) fail('quota-main.cjs 语法检查失败')
+    writeFileSync(QUOTA_MAIN_DST, readText(QUOTA_MAIN_SRC), 'utf8')
+    const url = pathToFileURL(QUOTA_MAIN_DST).href
+    const block = '\n;/* zcode-quota:begin */import(' + JSON.stringify(url) +
+      ').catch((e)=>console.error("[zcode-quota] load failed",e));/* zcode-quota:end */\n'
+    const mainSrc = readText(MAIN_ENTRY)
+    const next = mainSrc.replace(QUOTA_BLOCK_RE, '') + block
+    if (next !== mainSrc) writeFileSync(MAIN_ENTRY, next, 'utf8')
+    if (count(readText(MAIN_ENTRY), '/* zcode-quota:begin */') !== 1) fail('main 注入标记异常(zcode-quota)')
+    console.log('[0/2] main patch OK zcode-quota')
+  }
 }
 
 // 校验 1:注入块内容与源文件逐字节一致(round-trip)

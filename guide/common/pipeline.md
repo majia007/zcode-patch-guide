@@ -35,13 +35,25 @@ node inject/pack.mjs                                  # 全量(五个功能都�
 node inject/pack.mjs --scripts tok-badge,block-esc    # 只重注入所选(未选模块既有块保留)
 ```
 
-模块名:`tok-badge` / `block-esc` / `quota-balance` / `request-marker` / `project-tools`(逗号分隔)。选集只影响 renderer 注入;主进程额度补丁(`zcode-quota` 标记块与 `zcode-quota-main.cjs`)不在选集内,照常应用。用户只装部分功能时,按所选列表传 `--scripts`。
+模块名:`tok-badge` / `block-esc` / `quota-balance` / `request-marker` / `project-tools`(逗号分隔;`--scripts a,b` 与 `--scripts=a,b` 均可;重复声明/空清单/未知模块会显式报错退出,不会静默退化成全量或空选集)。用户只装部分功能时,按所选列表传 `--scripts`;注入块按模块表顺序落位,同一集合不同书写顺序产物一致。
+
+主进程额度补丁归属 `quota-balance`:本轮选集含它才挂载/更新(`zcode-quota` 标记块 + `zcode-quota-main.cjs`);未选时保留既有挂载不动——首次只装其它功能不会顺带装一个用不到的轮询器。
 
 做的事:把 `inject/` 脚本(全量或选集)注入 `unpack/app_extract/out/renderer/index.html` 的 head 闭合标签前(每脚本独立标记块包裹,幂等可重跑);另把 `quota-main.cjs` 拷到 `<resources>/zcode-quota-main.cjs`(不进 asar),并在 `unpack/app_extract/out/main/index.js` 尾部追加幂等标记块 `import("file://…/zcode-quota-main.cjs")`(主进程额度轮询器)→ 三重校验(round-trip 逐字节比对、标签计数、node --check)→ asar 打包到 `<resources>/app.asar.new`(约 1 分钟)。**不碰运行中的 app.asar**;任一校验失败立即中止、退出码非 0。
 
 产物 SHA 复现规则(实测):
 - 同一 `unpack/` 状态连跑,产物**逐字节一致**(可作部署自检:重跑一次比 SHA)
 - 重新解包后 SHA 必变(asar 解包→重打包往返不保证字节稳定)——**SHA 只用于同轮连跑核对,不跨解包比对**
+
+### 移除某个功能
+
+`--scripts` 只负责注入/更新,不卸载——未选模块的既有标记块原样保留。要真正移除:
+
+1. 用**未注入过的原始 app.asar** 重新解包(首次换装留在 `<resources>/app.asar.old` 的就是原始包),再按所需功能选集注入;或
+2. 从当前 `unpack/app_extract/out/renderer/index.html` 手动删除该模块的 `<!-- zcode-<name>:begin -->` 到 `<!-- zcode-<name>:end -->` 整块(只删标记块,不碰其余内容),再跑 `--scripts <要保留的模块>` 重新打包;
+3. 移除 `quota-balance` 时还要删 `out/main/index.js` 尾部的 `/* zcode-quota:begin */…/* zcode-quota:end */` 块(`<resources>/zcode-quota-main.cjs` 可留可删,无 import 不加载)。
+
+注意:直接重解包**当前已注入**的 app.asar 会带回旧标记块——pack.mjs 只剥离本轮选中模块的旧块,其余块仍在,所以"重解包 + 选集"不能当卸载用。
 
 ## 4. 换装
 
