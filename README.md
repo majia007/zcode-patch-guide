@@ -35,7 +35,7 @@ node inject/pack.mjs --deploy
 - **block-esc** — 防误触的 ESC 条件拦截
 - **quota-balance** — 上下文用量浮层里的第三方剩余额度段(需要本机运行 magpie 聚合器,见 [guide/quota-balance/facts.md](guide/quota-balance/facts.md))
 - **request-marker** — 步骤流按模型请求分组标记(组折叠头 `#min → #max` 区间 + 组内段首 `#N` 标签,见 [guide/request-marker/facts.md](guide/request-marker/facts.md))
-- **project-tools** — 左侧「项目」分区的名称/更新时间排序、项目名筛选、行内「移到最上方」、运行中任务图标与空闲后台任务标记(见 [guide/project-tools/facts.md](guide/project-tools/facts.md))
+- **project-tools** — 左侧「项目」分区的名称/更新时间排序、项目名筛选(宽时输入框常驻自适应、窄时按钮展开)、行内「移到最上方」、运行中任务图标与空闲后台任务标记、任务行时间按实际活跃时刻刷新并排序(见 [guide/project-tools/facts.md](guide/project-tools/facts.md))
 
 全部修改经解包→注入→打包→换装落地,自动保留回滚包。
 
@@ -97,7 +97,7 @@ node inject/pack.mjs --deploy
 │   ├── quota-balance.js    # 渲染端额度段脚本(挂到上下文容量浮层)
 │   ├── quota-main.cjs      # 主进程额度轮询器(拷到 resources 根目录,入口尾部动态 import)
 │   ├── request-marker.js   # 请求分组标记脚本(React fiber 读行数据,打 data-zrq-*)
-│   ├── project-tools.js    # 项目分区增强脚本(排序/筛选/移到最上方/运行中图标/后台任务标记,打 data-zqp-*)
+│   ├── project-tools.js    # 项目分区增强脚本(排序/筛选/移到最上方/运行中图标/后台任务标记/任务时间排序,打 data-zqp-*)
 │   ├── pack.mjs            # 注入打包器:注入 index.html → 挂主进程模块 → 三重校验 → asar 打包;--scripts 选集注入;--deploy 挂换装监视器
 │   └── apply-update.mjs    # 换装监视器:等退出→防降级校验→换装→按原命令行重启
 └── tools/
@@ -117,7 +117,7 @@ node inject/pack.mjs --deploy
 | 屏蔽 ESC | `inject/block-esc.js` | 条件式 ESC 拦截 |
 | magpie 额度显示 | `inject/quota-balance.js` + `inject/quota-main.cjs` | 上下文容量浮层内的第三方剩余额度段 |
 | 请求分组标记 | `inject/request-marker.js` | 步骤流按模型请求分组标记(组折叠头区间 + 组内段首标签) |
-| 项目分区增强 | `inject/project-tools.js` | 左侧项目分区的名称/更新时间排序、项目名筛选、移到最上方、运行中图标、任务行后台标记 |
+| 项目分区增强 | `inject/project-tools.js` | 左侧项目分区的名称/更新时间排序、项目名筛选(双形态)、移到最上方、运行中图标、任务行后台标记、任务时间改写/排序冻结 |
 
 白名单外的补丁**不得进入本仓库**。新增白名单项须明确批准,并同时更新本节、`inject/pack.mjs` 的 `SCRIPTS` 与对应 facts 卡。
 
@@ -127,4 +127,4 @@ node inject/pack.mjs --deploy
 
 Windows,3.14.1 / 3.14.3 / 3.14.4 / 3.15.1 / 3.15.3 / 3.16.1 / 3.16.3 / 3.17.1 / 3.17.2 / 3.18.0 / 3.18.1——锚点稳定性先例与升级漂移记录见 `guide/common/method.md`。
 
-quota-balance 在 3.17.1 / 3.17.2 实测(依赖该版本的浮层结构与 magpie 本地接口);request-marker 在 3.17.2 实机上线,3.18.0 适配组级折叠(组头区间标签 + 组内段首标签,页内 CDP 热替换验证)并于 3.18.1 实机运行(组头统计跨组补齐终版),其锚点卡在 3.17.1 / 3.17.2 / 3.18.0 / 3.18.1 解包产物均逐条命中(3.18.0 的 `assistantResponseId` 渲染侧字面量退出,改为 validation/schema 旁路命中);project-tools 随上游 3.17.2 实机验证(排序/筛选/移顶/spinner),其锚点卡在 3.17.1 与 3.17.2 解包产物均逐条命中;tok-badge / block-esc 的版本覆盖见上。
+quota-balance 在 3.17.1 / 3.17.2 实测(依赖该版本的浮层结构与 magpie 本地接口);request-marker 在 3.17.2 实机上线,3.18.0 适配组级折叠(组头区间标签 + 组内段首标签,页内 CDP 热替换验证)并于 3.18.1 实机运行(组头统计跨组补齐终版),其锚点卡在 3.17.1 / 3.17.2 / 3.18.0 / 3.18.1 解包产物均逐条命中(3.18.0 的 `assistantResponseId` 渲染侧字面量退出,改为 validation/schema 旁路命中);project-tools 随上游 3.17.2 实机验证(排序/筛选/移顶/spinner),其锚点卡在 3.17.1 与 3.17.2 解包产物均逐条命中;2026-11-12 增补任务时间改写/排序冻结与筛选双形态(页内 CDP 热替换验证),锚点卡在 3.17.1 / 3.18.1 解包产物逐条命中;tok-badge / block-esc 的版本覆盖见上。
