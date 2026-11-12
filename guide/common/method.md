@@ -27,12 +27,14 @@ print(open(f, encoding='utf-8', errors='replace').read()[i-300:i+500])
 
 **禁止作锚点**:带哈希的 bundle 文件名、字节偏移、minified 内部变量名(压缩名跨版本必变)。
 
-## 稳定性判据(3.14~3.17 五轮升级实测)
+## 稳定性判据(3.14~3.18.1 七轮升级实测)
 
 - **实测很稳**:i18n 文案、data-testid、协议 schema 字段、RPC channel/method 名(`zcode-session`/`zcode-agent`/`readSession` 全程未变)
 - **必变**:压缩内部变量名
 - **易死**:日志前缀串(比它修饰的枚举值死得快——先例:`tab type:` 前缀消失,19 种枚举裸值全稳;锚点按裸值改写即可)、CSS 原子类
-- **特例——渲染侧字面量退出 ≠ 协议漂移**:bundle 渲染代码不再含某字段字面量(如 `generationDurationMs` 3.14.4 起退出 styles 渲染侧),但协议 schema(`src-*.js`/host chunk)还在 = 线上协议没变,功能不受影响。判定要看 schema 侧,不要只看渲染侧
+- **特例——渲染侧字面量退出 ≠ 协议漂移**:bundle 渲染代码不再含某字段字面量(如 `generationDurationMs` 3.14.4 起退出 styles 渲染侧,`assistantResponseId` 3.18.0 起退出 styles),但协议 schema(`validation-*.js`/`src-*.js`/host chunk)还在 = 线上协议没变,功能不受影响。判定要看 schema 侧,不要只看渲染侧
+- **3.18.0 组折叠重塑**:DOM 侧新增的 `data-consecutive-summary-group` / `data-summary-group-*` 族仍稳定可 grep;但 React fiber 的 props 形态会直接换(`p.item.rows` 行内多工具消失、组内行改由组根 `children` 承载)——**取数逻辑要多源兜底、缺失即跳过,不要只认单一 props 形状**
+- **3.18.1(补丁级)**:白名单功能锚点全部稳定未动;bundle 哈希全换属常态,漂移甄别不受哈希换名影响
 
 ## MISS 甄别流程(锚点 0 命中时)
 

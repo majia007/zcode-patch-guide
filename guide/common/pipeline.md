@@ -69,11 +69,25 @@ node inject/pack.mjs --deploy
 
 ⚠️ **agent 红线:不要替用户退出 ZCode**——agent 会话很可能就跑在 ZCode 进程里,杀它等于杀掉自己的会话。跑到这一步就停下,把「请完全退出 ZCode(托盘右键退出)」交给用户,换装+重启+回来自动发生。
 
+### 监视器没存活(退出后没换装)
+
+症状:完全退出 ZCode 后 `<resources>/zcode-inject.log` 停在 `captured:`,没有 `OK swapped`;`app.asar.new` 仍在、`app.asar` 时间戳未变。
+
+原因:从 ZCode 内嵌 bash 工具(或其它会回收子进程 job 的宿主)跑 `--deploy` 时,detached 的换装监视器可能随命令 job 一起被回收。
+
+处理(Windows):
+
+1. 确认没有存活的监视器:`Get-CimInstance Win32_Process | Where-Object CommandLine -match 'apply-update'`
+2. 重启:`pwsh -NoProfile -File tools/restart-watcher.ps1`(自定义安装位置用 `-Resources <resources>` 或环境变量 `ZCODE_RES`)
+3. 预期输出:列出新 node 进程、`visible windows matching node/apply-update: 0`;日志新增 `start (wait)` 与 `captured:`,再让用户退出客户端
+
+原理:计划任务的进程脱离调用方 job;任务动作是 `wscript.exe tools/hidden-run.vbs <node> <apply-update.mjs> wait`——wscript 是 GUI 宿主(无控制台),VBS 的 `Run(...,0)` 隐藏启动 node。计划任务直排 `node.exe` 或 WMI 直起都会弹终端窗口;WMI + `powershell -WindowStyle Hidden` 静默失败、WMI + wscript 实测不起 node。本脚本仅 Windows 可用;mac 请从独立终端启动监视器。
+
 ZCode 本来就没在运行时,监视器会立刻换装并跳过重启(`no relaunch` 日志)。
 
 ## 5. 验证
 
-见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed;quota-balance 需本机 magpie 且选用第三方模型,打开上下文用量浮层看 `.zcode-quota-section`;request-marker 打开含工具调用的会话看行左侧 `#N` 标签与灰色竖条;project-tools 看侧栏「项目」分区标题 hover 的三个按钮、项目行「移到最上方」、运行中项目的 spinner 与空闲任务行的后台终端图标)。
+见各功能 facts.md 的验证清单(tok-badge 需发一轮对话;block-esc 重启后控制台即见 armed;quota-balance 需本机 magpie 且选用第三方模型,打开上下文用量浮层看 `.zcode-quota-section`;request-marker 打开含工具调用的会话看组折叠头 `#min → #max` 区间标签、展开组内段首 `#N` 标签;project-tools 看侧栏「项目」分区标题 hover 的三个按钮、项目行「移到最上方」、运行中项目的 spinner 与空闲任务行的后台终端图标)。
 
 ## 6. 回滚
 
@@ -91,6 +105,7 @@ mac 重签见 environment.md。注入本身只动 index.html 与 main 入口尾�
 2. **capture 排除 app-server 进程**(apply-update.mjs 的 captureMainCmdline):命令行含 `zcode.cjs`、无 `--type=` 的进程是 app-server,不排除的话换装后自动重启会拉起无 GUI 的 stdio 进程
 3. **一切 spawn 加 `windowsHide: true`**(apply-update.mjs 的 run):无控制台的后台进程 spawn 控制台程序(tasklist/powershell)不加它,Windows Terminal 为默认终端时**每秒弹一个终端窗口**(实测踩坑)
 4. **主进程入口注入「先剥旧标记块再追加」**(pack.mjs 的 QUOTA_BLOCK_RE):幂等与换 `ZCODE_RES` 后 file URL 更新都靠这条;直接 append 会叠出多份 import
+5. **换装监视器要脱离调用方 job**(部署方式):`--deploy` 的 detached watcher 在 ZCode 内嵌 bash 工具里可能随命令 job 被回收——部署后用 `Get-CimInstance Win32_Process` 核对存活,已死用 `tools/restart-watcher.ps1` 经计划任务 + wscript 重启;不要用 WMI 直起 node(弹窗/不起)
 
 ## agent 红线汇总
 
