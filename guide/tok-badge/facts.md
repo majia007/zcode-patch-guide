@@ -65,7 +65,7 @@ grep -Fc -- '--color-foreground-subtlest' unpack/app_extract/out/renderer/assets
 6. **token 口径**:`total = input + output` 恒成立;`cacheRead/cacheWrite ⊆ input`;三桶=缓存读/非缓存/输出
 7. **部分视图防线**:快照落在 turn 中途或仍在流式时整组不写不锁 `authoritative`(否则中途值冻成终值);`authoritative` 置位后迟到/重放的 usage.delta 一律丢弃防重复计
 8. **速度增量两路**:遥测 `stream.chunk`(channel 只有 thought/text)+ conversation `row.delta`(path=`inputText`,工具输入 JSON 流);`path=text` 与遥测重复不计,`output.text` 是工具执行结果不计。速度按字符双桶折 token(见下「双桶换算注」);与官方调试面板 TPS 是另一口径(output×1000÷generationDurationMs,含首字等待),实时条刻意不对齐
-9. **段切(steer 段粒度)**:turn 中途收到后台任务通知时,渲染侧在通知行处切新可视卡(section id=通知行 msg id),官方卡头「已工作 X」显示的是**各卡段墙钟**而非整 turn 墙钟——tok-badge 500ms 扫 DOM 新增卡切段(detectSegSplit→steerSplit),旧 turn 后续帧经重定向落新卡;权威校正组键=段边界行 msg id(`info.source==='background_task'` 判通知合成行,锚点卡 background_task 条即此依赖)
+9. **段切(steer 段粒度)**:turn 中途收到后台任务通知时,渲染侧在通知行处切新可视卡(section id=通知行 msg id),官方卡头「已工作 X」显示的是**各卡段墙钟**而非整 turn 墙钟——tok-badge 500ms 扫 DOM 复查候选卡,但**只认权威校正从 `readSession` 登记的 `background_task` 边界行 messageId**(`segBoundaryBySid`;`info.source==='background_task'` 判通知合成行,锚点卡 background_task 条即此依赖)才切段;渲染侧超长 turn 分段/虚拟化重挂/面板首次挂载出现的新 section 不是段边界(3.18.2 实测误切会把运行中 turn 的后续帧重定向到新段,统计条请求计数重置为「第 1 次」),权威数据未到时不猜、由终态校正按段组兜底。**请求编号跨段连续**:段切时新段 `reqBase`=旧段基数+旧段已完成数(在途请求的用量帧段切后落新段计入,只结转已完成防双计);权威校正按同一 turn 内组序累加 `reqBase`(遇真实 user 行清零);统计行占位/流式/完成三处编号一律加 `reqBase`,3.18.2 实机验证不重置
 10. **零用量请求与失败轮**:tokens 全 0 的 assistant 行默认不是请求行(系统 timeline_event 等),入列会把 rounds zip 顶错一格、±5% 双校验整链拒绝。例外是真实请求的零用量行(失败/中断/空完成):带 `error` 字段,或 `semantics.kind=assistant_response` 且已完成——它们只进组行、**不进 rounds 对齐序列**;失败轮照出统计行,输出按 `readSession.parts` 的 reasoning+text 逐字符折算(`≈` 标估算),输入端无内容差不可估;整轮零用量时 token 段整段省略(避免「共 0 tok」与三个 0%)。「更晚轮」判定遇等累计平局时按组边界行时刻比较,否则前轮恒被判末轮、徽标钉到失败卡上
 
 ## 双桶换算注
@@ -79,6 +79,7 @@ grep -Fc -- '--color-foreground-subtlest' unpack/app_extract/out/renderer/assets
 3. 回复下方出现统计行;生成中加载图标右侧出现 `t/s` 速度位;失败/中断的一轮也应出统计行(token 段带「估算」标记)
 4. `window.__tokDbg` 存在且计数在涨(facts/hit 系列字段)
 5. 同页 console 应有 `[block-esc] armed`(另一脚本,注入即打)
+6. 多请求轮(工具步骤多、或中途有后台任务通知)观察统计行:请求序号单调递增,不出现中途回到「第 1 次请求」;后台通知所在轮也不重置(=跨段连续编号生效)
 
 ## 排障与开关
 

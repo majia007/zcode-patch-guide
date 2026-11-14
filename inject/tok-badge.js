@@ -8,7 +8,8 @@
 //    按 deltas 数组识别，探针实测一次会话 1391 帧全无 kind）——漏了这路，工具调用流式期速度位无数据
 // 2) 每个可视卡（轮次卡/后台通知 steer 卡）下方常驻一条统计：token 总数 + 缓内/缓外/输出三桶及占比 + 首字（本轮第一段
 //    TTFT，先于平均显示）、平均速度、请求次数（流式中显示进行中序号「第 N 次请求…」——用量帧在
-//    请求结束时才报、末请求未入账，N 取 started 计数与已完成数+1 较大者）、总耗时/等待/响应/执行、
+//    请求结束时才报、末请求未入账，N 取 started 计数与已完成数+1 较大者，另加 reqBase——
+//    段切（后台通知 steer）后新卡从上一段完成数续编，turn 内请求编号连续）、总耗时/等待/响应/执行、
 //    累计。总耗时=视觉段墙钟（官方卡头「已工作 X」实证即此口径：段起点→段终点，含请求间
 //    执行时间；旧注释「turn 墙钟同口径」系误读——turn 中途被后台通知 steer 切卡时官方
 //    各卡显示的是各段墙钟而非整 turn 墙钟，BUG 会话 5 卡 DOM 实证）——流式中从段起点
@@ -27,7 +28,10 @@
 //    按消息序累积的组快照（t.cum），流式 turn 取会话账本现值（usage.delta 增量 + finalize
 //    全量覆盖，此刻其增量全属本条），修各条徽标同显一个会话总量的旧缺口（实测：三条同 831k）。
 //    流式期由帧计时驱动；后台通知 steer 到达时按 DOM 新增卡切段（detectSegSplit/steerSplit，
-//    帧经 segRedirect 改道段 T，速度位/进行中统计随 streamTidBySid 落到新卡）；turn 终态与会话打开时经双 RPC 权威校正（readSession 的 messages
+//    帧经 segRedirect 改道段 T，速度位/进行中统计随 streamTidBySid 落到新卡）；段切只认权威
+//    校正登记的 background_task 边界行 messageId——渲染侧把超长 turn 尾部/虚拟化重挂渲染成
+//    新 section 时 id 不在集合内，不能当段切（3.18.2 实测误切=长 turn 中途统计条重置为
+//    「第 1 次请求」，请求计数与段计时全断）；turn 终态与会话打开时经双 RPC 权威校正（readSession 的 messages
 //    给组归属+请求总时长、readSessionDebug.rounds 给 token 与生成段——token 以 rounds.usage
 //    为准，与调试面板同源同值）。注意 rounds 是 agent 进程内存态（探针实测：重启后
 //    requestIndex 从 1 重编、重启前轮次物理缺失，db 里虽有 time_to_first_token_ms 但宿主
@@ -37,7 +41,8 @@
 //    chunk 帧批量滞后导致的「时间全归等待」，及打开页面前已完成的轮次。部分视图防线：快照落在 turn 中途（组内完成数不全）或该 turn
 //    仍在流式时整组不写不锁，否则中途值冻成终值、迟到的 usage.delta 全被丢弃
 //    （3.14.1 实测事故：徽标 52.5k/26s vs 面板同轮 194k/2m50s，即中途快照被写死）
-// 3) 流式中首个用量帧到达前，统计行位置先显示「第 1 次请求…」占位（此时只知请求已开始）
+// 3) 流式中首个用量帧到达前，统计行位置先显示「第 N 次请求…」占位（N=started 帧计数；
+//    不能硬编码 1——多请求轮在首用量帧到达前会一直误报「第 1 次」，3.18.2 实测）
 // 4) 重启/刷新后的历史恢复：触发信号有三——conversation 通知壳帧 topic、turn.terminal、
 //    以及外呼嗅探到的页面 readSession 请求（postMessage 只达 host 端不回环，页面打开会话
 //    必发 readSession，安静会话无事件帧时靠它触发）；workspace 优先取请求参数自带的
@@ -130,6 +135,7 @@
   var segRedirect = new Map();   // 事实流 turnId -> 段 T 键（steer 段切后该 turn 的后续帧重定向到当前段，见 steerSplit）
   var knownSecsBySid = new Map();// sid -> Set(面板 section id 基线)：段切检测的新增卡对比域（500ms 扫描，per-sid）
   var sentMarkBySid = new Map(); // sid -> 最近用户发送外呼时刻：短窗内 DOM 新增卡是输入卡/应答卡而非通知卡，段切检测跳过
+  var segBoundaryBySid = new Map(); // sid -> Set(background_task 边界行 messageId，权威校正写入)：段切检测只认这些 id
   var sessCum = new Map();   // sid -> {inp,out,cr,tt} 会话累计账本（usage.delta 增量 / finalize 全量覆盖）；流式 turn 的「累计」显示源，完成 turn 改用 t.cum 快照
   var c2t = 3.0;             // 字符→token 比率，随每次 usage.delta 自校准
   var SPEED_STALE_MS = 3000; // 无 chunk 超此值判中断：速度区显示「等待响应」，恢复后重开计时段
@@ -148,6 +154,7 @@
             waitSum: 0, genSum: 0, // 等待=请求发出→首 chunk；生成=首 chunk→末 chunk（逐请求累加）
             reqCnt: 0, reqDurSum: 0, // 请求次数 / Σ请求时长（权威校正时写 db 口径终值）
             reqStarted: 0, // started 帧计数：流式中「第 N 次请求」的序号源（防用量帧滞后少报）
+            reqBase: 0, // 前序段已完成请求数：turn 内跨段连续编号基数（steerSplit 结转 / 权威校正按组写入）
             turnStart: 0, // 本轮墙钟起点=首个请求 started 帧到达时刻（官方 turnHeader.startedAt 的近似）
             gapSum: 0, // 执行时间=请求间间隙累计（工具执行/审批/规划，官方墙钟含它、纯请求口径漏它）
             gapFrom: 0, // 间隙起点（closeActive 时刻），下一次 started / turn.terminal 结清入 gapSum
@@ -236,6 +243,10 @@
     lastTidBySid.set(sid, segId);
     streamTidBySid.set(sid, segId);
     var nt = T(segId, sid);
+    // 请求编号跨段连续：新段基数=旧段基数+旧段已完成数。旧段在途请求的用量帧会在段切后
+    // 落到新段 T（segRedirect 改道），故只结转「已完成数」——在途请求由新段 cnt 第一次
+    // usage.delta 计入，避免与结转量双计（streaming 序号显示的 +1 正好覆盖在途位）。
+    nt.reqBase = (oldT.reqBase || 0) + (oldT.reqCnt || 0);
     if (!nt.turnStart) nt.turnStart = now; // 段墙钟起点=通知卡出现时刻（官方卡头的帧计近似，终态校正精确）
     schedulePaint(curTid);
     schedulePaint(segId);
@@ -608,6 +619,8 @@
     var groups = new Map(); // 段边界行 msgId -> {rows, tkTotal, ids, segStart, segEnd}
     var seq = [];           // 完成请求行（跨组全局序，供 rounds 尾对齐）
     var synInfo = new Map(); // user 合成行 msgId -> time.created（parentID 指向合成行的独立卡取它作段起点）
+    var bgIds = [];         // 本会话权威 background_task 段边界行 messageId（detectSegSplit 的唯一白名单）
+    var turnDone = 0;       // 本 turn（真实 user 行起算）已完成的请求数：段组的连续编号基数
     var cur = null, g = null, curStart = 0, openG = null;
     for (var mi = 0; mi < msgs.length; mi++) {
       var mm = msgs[mi];
@@ -618,13 +631,14 @@
         if (info.synthetic || info.visibility === 'model-only') {
           synInfo.set(info.messageId, tcr);
           if (info.source === 'background_task') {
+            bgIds.push(info.messageId); // 权威段边界：登记给 detectSegSplit，渲染卡与组键同值
             if (openG && openG.segEnd == null) openG.segEnd = tcr; // 上一段闭合（steer 段间无缝）
             cur = info.messageId; curStart = tcr; g = null;
           }
           continue;
         }
         if (openG && openG.segEnd == null) openG.segEnd = tcr;
-        cur = info.messageId; curStart = tcr; g = null; continue;
+        cur = info.messageId; curStart = tcr; g = null; turnDone = 0; continue;
       }
       // tokens 全 0 的 assistant 行默认不是请求行（系统 timeline_event 等，db 实证 7/8 会话含）：
       // 入列会把 rounds zip 顶错一格、±5% 双校验从首对起整链拒绝、genCnt=0 等待/平均/首字全写不回——
@@ -645,7 +659,7 @@
       var uid = synInfo.has(pid) ? pid : (cur || pid); // 组键=当前段边界；合成行独立卡（parentID 指向合成行）取 pid
       g = groups.get(uid);
       if (!g) {
-        g = { rows: [], tkTotal: 0, ids: [], segStart: (uid === cur ? curStart : (synInfo.get(uid) || 0)), segEnd: null };
+        g = { rows: [], tkTotal: 0, ids: [], segStart: (uid === cur ? curStart : (synInfo.get(uid) || 0)), segEnd: null, reqBase: turnDone };
         groups.set(uid, g); openG = g;
       }
       g.tkTotal++;
@@ -677,9 +691,15 @@
                   total: Math.max(0, (info.time.completed || info.time.created) - info.time.created),
                   c0: info.time.created, c1: info.time.completed || info.time.created, // db 起止（组墙钟/间隙计算用；零用量行缺终点按起点闭合）
                   matched: false, gen: 0, wait: 0, zero: !hasTok, est: Math.round(est) };
-      g.rows.push(row); g.ids.push(info.messageId);
+      g.rows.push(row); g.ids.push(info.messageId); turnDone++;
       if (hasTok) seq.push(row); // 零用量行无 round 可配（rounds 只记 completed），不进对齐序列
     }
+    // 权威段边界集合（per-sid）：detectSegSplit 是 DOM 驱动的实时猜测，只认这里登记过的
+    // background_task 边界行 id——渲染侧超长 turn 分段（尾部成独立 section，id 是合成 user
+    // 行）/虚拟化重挂/面板首次挂载产生的新 section 不在集合内，不能当 steer 段切（3.18.2
+    // 实测：误切把运行中 turn 的后续帧重定向到新段 T，请求计数从 1 重来，统计条显示
+    // 「第 1 次请求」）。空集=本会话没有权威段边界，不做任何 DOM 猜测。
+    segBoundaryBySid.set(sid, new Set(bgIds));
     // 第二遍：rounds 尾部对齐（上限 200，早期轮无计时），out+inp 双校验防 zip 错位。
     // 命中行的 token 换用 rounds.usage——调试面板同源同值，免疫消息侧 tokens 的陈旧快照；
     // 缓存字段名是 cachedInputTokens（非 db/usage.delta 的 cacheReadTokens）。
@@ -767,6 +787,7 @@
       t.sid = sid;
       t.total = { inp: inp, out: out, cr: cr, tt: tt };
       t.reqCnt = gv.rows.length;
+      t.reqBase = gv.reqBase || 0; // 组内连续编号基数（同一 turn 内前序段的已完成请求数）
       t.reqDurSum = dur;
       t.estOut = estSum; // 零用量请求（失败/中断）输出 token 估算和（statsText ≈ 标注；不进权威累计 cum）
       t.cum = gv.cumUpTo; // 累计快照：本组及其前各组已完成请求的 token 总和
@@ -948,8 +969,10 @@
   function statsText(t) {
     var d = t.total;
     var streaming = t.active && !t.terminal;
-    // 用量帧在请求结束时才报，首个用量到达前不空着：流式中先显示进行中序号占位
-    if (!t.reqs.length) return streaming ? '第 1 次请求…' : '';
+    // 用量帧在请求结束时才报，首个用量到达前不空着：流式中先显示进行中序号占位。
+    // 占位必须用 started 计数——硬编码 1 会让多请求轮在首用量帧到达前一直报「第 1 次请求」
+    // （3.18.2 实测：长 turn 中途统计条显示第 1 次，而数据库已完成十余次请求）
+    if (!t.reqs.length) return streaming ? '第 ' + ((t.reqBase || 0) + Math.max(1, t.reqStarted || 0)) + ' 次请求…' : '';
     var fresh = Math.max(0, d.inp - d.cr); // 缓外 = 输入 − 缓内（含缓存写入与新鲜输入）
     var tot = d.tt || (d.inp + d.out);
     // 零用量轮（首请求即失败/中断，db 实证记 0 token）：token 段整段省略——「共 0 tok」
@@ -971,9 +994,12 @@
     // 有真值行时 token 段已是真值，估算作附加段「失败请求 ≈」标出
     if (t.estOut > 0) s += (s ? ' · ' : '') + (tot > 0 ? '失败请求 ≈' : '输出 ≈') + k(t.estOut) + ' tok(估算)';
     var cnt = t.reqCnt || t.reqs.length;
-    // 流式中末请求尚未入账：显示进行中序号而非已完成数（N 取 started 计数，帧滞后时已完成数+1 兜底）
-    if (streaming) s += ' · 第 ' + Math.max(cnt + 1, t.reqStarted || 0) + ' 次请求…';
-    else if (cnt) s += (s ? ' · ' : '') + cnt + ' 次请求';
+    var rb = t.reqBase || 0; // 前序段已完成请求数（turn 内跨段连续编号基数）
+    // 流式中末请求尚未入账：显示进行中序号而非已完成数（N 取 started 计数，帧滞后时已完成数+1 兜底）；
+    // 编号一律加 reqBase——段切后新卡从上一段的完成数续编，不重头数（3.18.2 实测误切/真段切
+    // 都会出现「第 1 次请求」重置，用户要求编号连续）
+    if (streaming) s += ' · 第 ' + (rb + Math.max(cnt + 1, t.reqStarted || 0)) + ' 次请求…';
+    else if (rb + cnt) s += (s ? ' · ' : '') + (rb + cnt) + ' 次请求';
     // 总耗时口径=视觉段墙钟（官方卡头「已工作 X」实证即此口径：段起点→段终点，含请求间
     // 执行时间）。流式中=段起点（首请求 started 帧/通知卡出现时刻的近似）→now 单调走表；
     // 完成=turn.terminal 帧 durationMs（未段切 turn 同源终值；段切过的 turn 改用
@@ -1198,12 +1224,18 @@
       // 发送窗口轮：吞卡入基线但不切段——输入卡已确认非通知卡；steer 通知恰撞窗口时降级为
       // 旧行为（流式期贴旧卡、终态校正跳对），换取绝对不误切（误切会把跑着 turn 的终值经
       // redirect 写进输入卡段 T，污染 durMs 且取大兜底救不回）
+      // 只认权威校正登记过的 background_task 边界行 id：渲染侧超长 turn 分段/虚拟化重挂/
+      // 面板首次挂载都可能冒出"未知新卡"，按未知就切会把运行中 turn 的请求计数重置为
+      // 「第 1 次请求」（3.18.2 实测）。权威数据未到（bgSet 不存在）时不做 DOM 猜测——
+      // 终态权威校正按段组补齐，宁缺勿误切。
+      var bgSet = segBoundaryBySid.get(sid);
+      if (!bgSet) return;
       var inSendWindow = Date.now() - (sentMarkBySid.get(sid) || 0) < 5000;
       var added = null;
       if (!inSendWindow) {
         for (var j = 0; j < ids.length; j++) {
           if (ids[j] === t.msgId || ids[j] === t.domId) continue; // 流式卡自身挂载
-          if (!known.has(ids[j]) && !turns.has(ids[j])) { added = ids[j]; break; } // 未知新卡
+          if (!known.has(ids[j]) && !turns.has(ids[j]) && bgSet.has(ids[j])) { added = ids[j]; break; }
         }
       }
       // 基线只增不减：全量覆盖会让虚拟化卸载把 id 洗出基线、滚回重挂时误判成新卡切段
