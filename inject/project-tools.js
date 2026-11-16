@@ -20,9 +20,11 @@
 //   2. 项目行右侧动作组("..." 菜单旁)加"移到最上方": 复用应用自身的顺序持久化
 //      (localStorage zcode-project-sidebar-preferences 的 order 数组 + 合成 storage 事件),
 //      等价于手动拖拽到顶部, 不改 pinned。
-//   3. 项目下存在运行中任务时, 项目名称右侧追加旋转加载图标(挂名称容器末尾, 间距沿用原生 gap-2)。
-//     运行态从 React fiber 的 memoizedProps.tasks[].__zcodeSessionActivity.phase 读取
-//     折叠项目也拿得到, 不依赖任务行是否渲染)。
+//   3. 项目下存在运行中任务且项目收起时, 项目条目才标记 loading: 折叠触发器图标盒里的
+//     原生文件夹/表情图标隐藏, 换成同位旋转加载图标(CSS 按触发器 aria-expanded=false
+//     门控, 项目展开即还原原生图标且不再显示任何 loading 标记)。运行态从 React fiber
+//     的 memoizedProps.tasks[].__zcodeSessionActivity.phase 读取, 收起项目也拿得到,
+//     不依赖任务行是否渲染。
 //   4. 任务行(li[data-task-item-key])沿 fiber 读 props.task 的 __zcodeSessionActivity:
 //      hasBackgroundWork===true 且 phase 非 running/prewarming(会话空闲但后台任务在跑)
 //      时行打 data-zqp-bg, 行首状态格(原生指示器位, 空闲时为空位)补静态终端图标 ——
@@ -48,7 +50,8 @@
 // (关闭后下一拍还原容器排序态并把时间文本改回原生 updatedAt 口径)。
 // 运行时停用: window.__zcodeProjectTools.stop()。
 // 依赖: section[data-project-id] / data-project-host / data-project-name /
-//       data-testid=project-section / virtual-project-toggle(-all) / virtual-project-actions /
+//       data-testid=project-section / virtual-project-toggle(-all, 触发器带 aria-expanded
+//       展开态=spinner 显示门控) / virtual-project-actions /
 //       __zcodeSessionActivity(含 hasBackgroundWork/lastActivityAt 字段) / li[data-task-item-key] /
 //       data-task-row-metadata(时间节点=其末子节点) / data-testid=task-list(任务包装层) /
 //       data-task-list-show-more(列表尾部按钮, 容器 guard 识别) /
@@ -479,7 +482,8 @@
     }
   };
 
-  // 项目行: 右侧动作组加"移到最上方", 项目名称右侧追加运行态 spinner(原图标不动)
+  // 项目行: 右侧动作组加"移到最上方"; 运行态 spinner 挂折叠触发器图标盒
+  // (仅收起+运行中显示, CSS 顶替原生首图标, 展开即还原)
   const syncRowChrome = (sec, meta) => {
     const actions = sec.querySelector(':scope > [data-testid="virtual-project-row"] [data-testid="virtual-project-actions"]');
     if (actions && !actions.querySelector('[data-zqp-action="top"]')) {
@@ -487,17 +491,18 @@
       actions.insertBefore(makeButton(cls, 'top', '移到最上方', ICON_TOP), actions.firstChild);
     }
 
-    // 名称容器 = 折叠按钮内图标盒(aria-hidden span)的下一个兄弟; spinner 挂其末尾,
-    // 水平间距沿用容器原生 gap-2, 基线容器内用 align-self:center 垂直居中
-    const nameBox = sec.querySelector(':scope > [data-testid="virtual-project-row"] button[data-testid="virtual-project-toggle"] > span[aria-hidden="true"] + span');
-    if (nameBox) {
-      let spin = nameBox.querySelector('[data-zqp-spinner]');
+    // 图标盒 = 折叠按钮内第一个 span(aria-hidden): 原生文件夹/表情图标(size-4)所在。
+    // spinner 挂其末尾, 显示与原生首图标的隐藏全由 CSS 按 aria-expanded 门控(仅收起+
+    // 运行中显示), 本函数只负责幂等补挂与运行态属性
+    const iconBox = sec.querySelector(':scope > [data-testid="virtual-project-row"] button[data-testid="virtual-project-toggle"] > span[aria-hidden="true"]');
+    if (iconBox) {
+      let spin = iconBox.querySelector('[data-zqp-spinner]');
       if (!spin) {
         spin = document.createElement('span');
         spin.setAttribute('data-zqp-spinner', '1');
         spin.className = 'zqp-spinner animate-spin';
         spin.innerHTML = ICON_SPINNER;
-        nameBox.appendChild(spin);
+        iconBox.appendChild(spin);
       }
     }
     sec.setAttribute('data-zqp-running', meta.running ? '1' : '0');
@@ -752,9 +757,11 @@
         content: "无匹配项目"; margin-left: 6px; white-space: nowrap;
         font-size: var(--text-ui-sm); color: var(--color-foreground-subtle);
       }
-      /* 运行态: spinner 挂项目名称容器末尾(原生 gap-2 控距), 基线容器内垂直居中 */
-      .zqp-spinner { display: none; align-items: center; justify-content: center; align-self: center; }
-      [data-zqp-running="1"] .zqp-spinner { display: inline-flex; }
+      /* 运行态: 仅收起时标记——spinner 顶替折叠触发器图标盒内原生首图标(文件夹/表情);
+         aria-expanded 门控, 展开即隐藏 spinner 并还原原生图标(两条规则同条件, 互斥不并存) */
+      .zqp-spinner { display: none; align-items: center; justify-content: center; }
+      [data-zqp-running="1"] button[data-testid="virtual-project-toggle"][aria-expanded="false"] .zqp-spinner { display: inline-flex; }
+      [data-zqp-running="1"] button[data-testid="virtual-project-toggle"][aria-expanded="false"] > span[aria-hidden="true"] > span:first-child { display: none; }
       /* 后台任务标记: 行首状态格空闲位, 静态终端图标 */
       .zqp-bgmark { display: none; align-items: center; justify-content: center; color: var(--color-foreground-subtle); }
       [data-zqp-bg="1"] .zqp-bgmark { display: inline-flex; }
