@@ -53,6 +53,8 @@ grep -Fc -- '--color-foreground-subtlest' unpack/app_extract/out/renderer/assets
 
 (信封字段注意:3.14.1 起 conversation 完整帧无 `wireVersion`/`kind` 字段——旁路过滤条件按现役字段集,帧识别靠 `payload.deltas` 数组形态。)
 
+3.19.0 复验:24 条逐条命中(styles 计数 1/2/1/4/1/10;帧协议与 RPC 4/4/4/4/10/4/127/92/2/1/1/2/17/—/2/2——`generationDurationMs` styles 0 命中属旁路,validation/src/host chunk 侧在;CSS 38/74)。
+
 ## 机制最小结论
 
 排障与改版需要知道的(全量在脚本头注释):

@@ -39,7 +39,7 @@ grep -oF '__reactFiber$' unpack/app_extract/out/renderer/assets/pptxElementRefer
 | preload/index.cjs | `assistantResponseId` | 分组键的 bridge 镜像(旁路佐证) |
 | pptxElementReference-*.js | `__reactFiber$` | React fiber 键前缀(数据入口,最脆弱的一条) |
 
-3.18.0 解包产物实测计数(`grep -oF | wc -l`,styles 侧):`2 / 5 / 4 / 4 / 1 / 1 / 2 / 1 / 1 / 1`;`assistantResponseId` validation 3 + preload 3(styles 0),`__reactFiber$` 1。3.17.x 的旧锚点卡同样全绿;3.18.0 的 `assistantResponseId` 渲染侧字面量退出属**旁路命中**,不是协议漂移。3.18.1 复验同全绿(补丁级升级,白名单锚点未动)。
+3.18.0 解包产物实测计数(`grep -oF | wc -l`,styles 侧):`2 / 5 / 4 / 4 / 1 / 1 / 2 / 1 / 1 / 1`;`assistantResponseId` validation 3 + preload 3(styles 0),`__reactFiber$` 1。3.17.x 的旧锚点卡同样全绿;3.18.0 的 `assistantResponseId` 渲染侧字面量退出属**旁路命中**,不是协议漂移。3.18.1 复验同全绿(补丁级升级,白名单锚点未动)。3.19.0 复验同全绿(styles 计数同为 `2 / 5 / 4 / 4 / 1 / 1 / 2 / 1 / 1 / 1`;`assistantResponseId` validation 3 + preload 3;`__reactFiber$` 1)。
 
 ## 机制最小结论
 

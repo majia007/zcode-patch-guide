@@ -43,6 +43,8 @@ grep -oF '__reactFiber$' unpack/app_extract/out/renderer/assets/pptxElementRefer
 
 锚点在上游仓库 3.17.2 解包产物逐条命中;本仓库现存的 3.17.1 解包产物同样逐条命中(旧 9 项计数 9 / 4 / 2 / 1 / 2 / 1 / 1 / 2 / 2,`__reactFiber$` 1;后台标记两项 `data-task-item-key` / `hasBackgroundWork` 各 3,2026-11-05 补验;2026-11-12 增补四项在 3.17.1 实测 `lastActivityAt` 7(host index 6 / host chunk 5)、`data-task-row-metadata` 2、`data-task-list-show-more` 2、`task-new-button` 1,上游 3.18.1 解包产物同样逐条命中)。
 
+3.19.0 复验:16 条逐条命中(styles 计数 9/4/2/1/2/1/1/2/3/3/7/2/2/1/2,`lastActivityAt` host 侧 11;`__reactFiber$` 1)。
+
 ## 机制最小结论
 
 1. **排序是视觉覆盖**:给项目列表容器加 `data-zqp-list`(CSS 改 flex 列),给 `section[data-project-id]` 写行内 `style.order`——**不改写** `zcode-project-sidebar-preferences.order`(用户手动顺序),取消排序即清 `style.order` 复原

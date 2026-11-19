@@ -37,6 +37,8 @@ grep -F 'data-slot' unpack/app_extract/out/renderer/assets/pptxElementReference-
 
 运行时指纹第三层 `div.space-y-3` 是浮层内容根,对应的 bundle 字面串是 class `space-y-3`(太泛,不作硬锚点;脚本用 DOM 选择器匹配)。
 
+3.19.0 复验:styles 侧按卡内顺序 1/1/1/1/5/54/9,pptxElementReference 的 `data-slot`+`progress` 组合 11,均命中。
+
 ## 机制最小结论
 
 1. **为什么走主进程**:渲染端直接 `fetch` magpie 会带 `Origin`,magpie 返回 403;主进程 Node 请求无 Origin,正常 200。主脚本 `executeJavaScript` 调 `window.__zcodeQuotaUpdate(payload)` 推给各窗口,渲染端**不发网络请求**。
